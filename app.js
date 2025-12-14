@@ -18,7 +18,7 @@
         circularDependency: 'モジュール間で循環依存を検出: ',
         validationFailed: 'エラー: 検証に失敗しました — ポップアップを確認してください',
         failedToReadFiles: 'ファイルの読み込みに失敗しました: ',
-        exportFailed: 'エクスポート失敗'
+        exportFailed: 'エクスポートに失敗しました'
     };
 
     function log(s) { logEl.textContent = s }
