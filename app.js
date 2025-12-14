@@ -510,6 +510,9 @@
                 .module-meta { font-size:11px; fill:#333; }
                 rect.module-rect { rx:6; }
                 .lane-label { font-size:14px; font-weight:700; fill:#111; }
+                /* error panel styles */
+                .error-svg-header { font-size:14px; font-weight:700; fill:#7a0b0b; }
+                .error-svg-line { font-size:12px; fill:#7a0b0b; }
             `;
             styleEl.textContent = cssText;
             out.appendChild(styleEl);
@@ -596,6 +599,63 @@
                 }
             }
             out.appendChild(modulesGroup);
+
+            // If there is an inline error panel displayed below the timeline, render it into the SVG.
+            try {
+                const errEl = document.getElementById('errorPanel');
+                if (errEl) {
+                    const er = errEl.getBoundingClientRect();
+                    const ex = (er.left - baseRect.left);
+                    const ey = (er.top - baseRect.top);
+                    const ew = er.width;
+                    const eh = er.height;
+                    const errGroup = document.createElementNS(xmlns, 'g');
+
+                    const errBg = document.createElementNS(xmlns, 'rect');
+                    errBg.setAttribute('x', ex);
+                    errBg.setAttribute('y', ey);
+                    errBg.setAttribute('width', ew);
+                    errBg.setAttribute('height', eh);
+                    errBg.setAttribute('fill', '#fff4f4');
+                    errBg.setAttribute('stroke', '#e74c3c');
+                    errBg.setAttribute('stroke-width', '1');
+                    errGroup.appendChild(errBg);
+
+                    const accent = document.createElementNS(xmlns, 'rect');
+                    accent.setAttribute('x', ex);
+                    accent.setAttribute('y', ey);
+                    accent.setAttribute('width', 6);
+                    accent.setAttribute('height', eh);
+                    accent.setAttribute('fill', '#e74c3c');
+                    errGroup.appendChild(accent);
+
+                    const headerEl = errEl.querySelector('.error-header');
+                    let textY = ey + 18;
+                    if (headerEl) {
+                        const hText = document.createElementNS(xmlns, 'text');
+                        hText.setAttribute('class', 'error-svg-header');
+                        hText.setAttribute('x', ex + 12);
+                        hText.setAttribute('y', textY);
+                        hText.textContent = headerEl.textContent.trim();
+                        errGroup.appendChild(hText);
+                        textY += 18;
+                    }
+                    const items = errEl.querySelectorAll('li');
+                    let idx = 0;
+                    for (const li of items) {
+                        const t = document.createElementNS(xmlns, 'text');
+                        t.setAttribute('class', 'error-svg-line');
+                        t.setAttribute('x', ex + 12);
+                        t.setAttribute('y', textY + (idx * 14));
+                        t.textContent = '• ' + li.textContent.trim();
+                        errGroup.appendChild(t);
+                        idx++;
+                    }
+                    out.appendChild(errGroup);
+                }
+            } catch (e) {
+                console.warn('Failed to include error panel in SVG export', e);
+            }
 
             const serializer = new XMLSerializer();
             const str = serializer.serializeToString(out);
