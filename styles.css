@@ -1,0 +1,150 @@
+:root {
+    --lane-h: 110;
+    --pad: 20;
+    --bg: #f6f7fb;
+    --accent: #2b6df6
+}
+
+* {
+    box-sizing: border-box;
+    font-family: Inter, Segoe UI, Arial, sans-serif
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: #111
+}
+
+header {
+    padding: 16px 24px;
+    background: #fff;
+    border-bottom: 1px solid #e6e9ef
+}
+
+.controls {
+    padding: 12px 24px;
+    display: flex;
+    gap: 12px;
+    align-items: center
+}
+
+.filelabel input {
+    margin-left: 8px
+}
+
+.log {
+    color: #444;
+    font-size: 13px
+}
+
+#timelineWrap {
+    position: relative;
+    margin: 18px;
+    padding: 16px;
+    background: #fff;
+    border-radius: 6px;
+    overflow: auto
+}
+
+.timeline {
+    position: relative;
+    min-height: 200px;
+    padding: 12px
+}
+
+.lane {
+    position: relative;
+    border-top: 1px dashed #e2e6ef;
+    padding: 12px 8px;
+    height: var(--lane-h);
+    padding-left: 180px;
+    /* reserve more space for label */
+}
+
+.laneLabel {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-weight: 700;
+    font-size: 14px;
+    color: #333
+}
+
+.module {
+    position: absolute;
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: #ffffff;
+    border: 1px solid rgba(43, 109, 246, 0.12);
+    box-shadow: 0 6px 14px rgba(30, 40, 80, 0.06);
+    font-size: 13px;
+    min-width: 48px;
+    transition: transform .12s ease, box-shadow .12s ease;
+}
+
+.module .name {
+    font-weight: 700
+}
+
+.module .meta {
+    font-size: 12px;
+    color: #444;
+    margin-top: 4px
+}
+
+.module:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 24px rgba(30, 40, 80, 0.12)
+}
+
+.connector {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none
+}
+
+/* popup for errors */
+.popup-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.32);
+    z-index: 9999
+}
+
+.popup-content {
+    background: #fff;
+    padding: 18px 20px;
+    border-radius: 10px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+    max-width: 640px;
+    width: clamp(280px, 60%, 640px);
+    border-left: 6px solid #e74c3c
+}
+
+.popup-content h3 {
+    margin: 0 0 8px;
+    font-size: 16px
+}
+
+.popup-content p {
+    margin: 0 0 12px;
+    color: #333
+}
+
+.popup-close {
+    display: inline-block;
+    background: #e74c3c;
+    color: #fff;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer
+}

@@ -1,0 +1,37 @@
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Editor folders
+.vscode/
+/.idea/
+
+# Build / binary
+*.exe
+*.dll
+*.so
+*.dylib
+*.obj
+*.o
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# Workspace-specific
+*.db
+*.sqlite3
+
+# Ignore generated thumbnails or exports
+*.png
+*.jpg
+*.jpeg
+
+# Keep project files
+!.gitignore
