@@ -5,6 +5,23 @@
     const svg = document.getElementById('connectorLayer');
     const logEl = document.getElementById('log');
 
+    // i18n messages (Japanese)
+    const MSG = {
+        close: '閉じる',
+        validationErrors: '検証エラー',
+        jsonParseError: 'JSON解析エラー: ',
+        invalidJson: '無効なJSON',
+        notJsonFile: 'JSONファイルではありません',
+        invalidTimeValues: '無効な時間値: ',
+        multipleThreadEntryModules: '複数のスレッドエントリモジュール: ',
+        inconsistentFromTo: 'from/toの関係に不整合: ',
+        circularDependency: 'モジュール間で循環依存を検出: ',
+        validationFailed: 'エラー: 検証に失敗しました — ポップアップを確認してください',
+        failedToReadFiles: 'ファイルの読み込みに失敗しました: ',
+        exportFailed: 'エクスポートに失敗しました'
+        , ambiguousOrdering: '同一スレッド上の順序が不明: '
+    };
+
     function log(s) { logEl.textContent = s }
 
     // show an in-page popup message (error/info)
@@ -14,7 +31,7 @@
         const overlay = document.createElement('div'); overlay.id = 'seq-popup'; overlay.className = 'popup-overlay';
         const content = document.createElement('div'); content.className = 'popup-content';
         content.innerHTML = `<h3>${title}</h3><p>${msg}</p>`;
-        const btn = document.createElement('button'); btn.className = 'popup-close'; btn.textContent = 'Close';
+        const btn = document.createElement('button'); btn.className = 'popup-close'; btn.textContent = MSG.close;
         btn.onclick = () => overlay.remove();
         content.appendChild(btn);
         overlay.appendChild(content);
@@ -38,11 +55,11 @@
                     parsedAsJSON = true;
                     rows = Array.isArray(parsed) ? parsed : [parsed];
                 } catch (e) {
-                    parseErrors.push(`${name}: invalid JSON (${e.message})`);
+                    parseErrors.push(`${name}: ${MSG.invalidJson} (${e.message})`);
                     continue;
                 }
             } else {
-                parseErrors.push(`${name}: not a JSON file`);
+                parseErrors.push(`${name}: ${MSG.notJsonFile}`);
                 continue;
             }
 
@@ -199,10 +216,26 @@
 
         // compute box rects using DOM geometry so arrows align to edges
         const boxRects = {};
-        // ensure svg has the correct size
+        // ensure svg has the correct size and will scroll in sync with the timeline content
+        const contentH = threads.length * laneH + 80;
         svg.setAttribute('width', width);
-        svg.setAttribute('height', threads.length * laneH + 80);
-        svg.style.height = (threads.length * laneH + 80) + 'px';
+        svg.setAttribute('height', contentH);
+        // set explicit style sizes so CSS width:100% doesn't clip content width
+        svg.style.width = width + 'px';
+        svg.style.height = contentH + 'px';
+
+        // ensure the SVG sits inside the scrolling timeline content so it scrolls
+        // together with module boxes. This avoids needing CSS transforms that
+        // can desynchronize coordinates.
+        try {
+            if (svg.parentNode !== timelineEl) {
+                timelineEl.insertBefore(svg, timelineEl.firstChild);
+            }
+            // clear any previous transform state
+            svg.style.transform = '';
+        } catch (e) {
+            // ignore if DOM operations fail
+        }
         // reflow to get correct bounding boxes
         let svgRect = svg.getBoundingClientRect();
 
@@ -332,7 +365,7 @@
             const errors = [];
             // collect parse errors (if any) instead of aborting immediately
             if (res.parseErrors && res.parseErrors.length > 0) {
-                for (const pe of res.parseErrors) errors.push('JSON parse error: ' + pe);
+                for (const pe of res.parseErrors) errors.push(MSG.jsonParseError + pe);
             }
 
             // validate: time values provided must be positive numbers (> 0)
@@ -345,7 +378,7 @@
                     }
                 }
             }
-            if (badTimes.length > 0) errors.push('Invalid time values: ' + badTimes.join(' ; '));
+            if (badTimes.length > 0) errors.push(MSG.invalidTimeValues + badTimes.join(' ; '));
 
             // validate: each thread should have at most one module with no `from` (entry module)
             const threadStarts = {};
@@ -359,8 +392,8 @@
             }
             const bad = Object.entries(threadStarts).filter(([t, arr]) => arr.length > 1);
             if (bad.length > 0) {
-                const lines = bad.map(([t, arr]) => `Thread ${t}: ${arr.join(', ')}`);
-                errors.push('Multiple thread entry modules: ' + lines.join(' ; '));
+                const lines = bad.map(([t, arr]) => `スレッド ${t}: ${arr.join(', ')}`);
+                errors.push(MSG.multipleThreadEntryModules + lines.join(' ; '));
             }
 
             // validate from/to consistency: for every a.to contains b, b.from must contain a, and vice versa
@@ -373,42 +406,98 @@
             for (const a in toSets) {
                 for (const b of toSets[a]) {
                     if (!(b in modules)) {
-                        inconsistencies.push(`Module ${a} has to->${b} but module ${b} not found`);
+                        inconsistencies.push(`モジュール ${b} が見つかりません（${a} の to に ${b} が含まれています）`);
                         continue;
                     }
                     if (!fromSets[b].has(a)) {
-                        inconsistencies.push(`Mismatch: ${a} lists ${b} in to, but ${b} does not list ${a} in from`);
+                        inconsistencies.push(`不整合: ${a} は to に ${b} を含みますが、${b} の from に ${a} がありません`);
                     }
                 }
             }
             for (const a in fromSets) {
                 for (const b of fromSets[a]) {
                     if (!(b in modules)) {
-                        inconsistencies.push(`Module ${a} has from->${b} but module ${b} not found`);
+                        inconsistencies.push(`モジュール ${b} が見つかりません（${a} の from に ${b} が含まれています）`);
                         continue;
                     }
                     if (!toSets[b].has(a)) {
-                        inconsistencies.push(`Mismatch: ${a} lists ${b} in from, but ${b} does not list ${a} in to`);
+                        inconsistencies.push(`不整合: ${a} は from に ${b} を含みますが、${b} の to に ${a} がありません`);
                     }
                 }
             }
-            if (inconsistencies.length > 0) errors.push('Inconsistent from/to relationships: ' + inconsistencies.join(' ; '));
+            if (inconsistencies.length > 0) errors.push(MSG.inconsistentFromTo + inconsistencies.join(' ; '));
+
+            // validate same-thread ordering: modules on same thread must have a transitive dependency
+            // build adjacency (to) and compute reachability
+            const adj = {};
+            for (const name in modules) adj[name] = new Set((modules[name].to || []).filter(x => x));
+            const reachable = {};
+            for (const name in modules) {
+                const seen = new Set();
+                const stack = Array.from(adj[name] || []);
+                while (stack.length) {
+                    const v = stack.pop();
+                    if (!v || seen.has(v)) continue;
+                    seen.add(v);
+                    const next = adj[v];
+                    if (next) for (const w of next) if (!seen.has(w)) stack.push(w);
+                }
+                reachable[name] = seen;
+            }
+
+            const threadAmbiguities = [];
+            const byThread = {};
+            for (const name in modules) {
+                const t = String(modules[name].thread || '0');
+                (byThread[t] = byThread[t] || []).push(name);
+            }
+            for (const t in byThread) {
+                const arr = byThread[t];
+                if (arr.length <= 1) continue;
+                for (let i = 0; i < arr.length; i++) {
+                    for (let j = i + 1; j < arr.length; j++) {
+                        const a = arr[i], b = arr[j];
+                        const aToB = reachable[a] && reachable[a].has(b);
+                        const bToA = reachable[b] && reachable[b].has(a);
+                        if (!aToB && !bToA) {
+                            threadAmbiguities.push(`スレッド ${t}: ${a} と ${b} の実行順序が不明`);
+                        }
+                    }
+                }
+            }
+            if (threadAmbiguities.length > 0) errors.push(MSG.ambiguousOrdering + threadAmbiguities.join(' ; '));
 
             // schedule and check cycles
             const result = schedule(modules);
             if (result.cycles && result.cycles.length > 0) {
-                errors.push('Circular dependency detected among modules: ' + result.cycles.join(', '));
+                errors.push(MSG.circularDependency + result.cycles.join(', '));
             }
 
+            // If there are validation errors, show popup AND display them inline below the timeline,
+            // but still attempt to render the timeline so user can inspect diagram state.
+            const errorPanelId = 'errorPanel';
+            const existingErrPanel = document.getElementById(errorPanelId);
             if (errors.length > 0) {
-                showPopup('Validation errors', errors.map(e => ('* ' + e)).join('<br>'));
-                log('Error: validation failed — see popup');
-                return;
+                showPopup(MSG.validationErrors, errors.map(e => ('* ' + e)).join('<br>'));
+                log(MSG.validationFailed);
+                let errPanel = existingErrPanel;
+                if (!errPanel) {
+                    errPanel = document.createElement('div');
+                    errPanel.id = errorPanelId;
+                    errPanel.className = 'error-panel';
+                    // append after timeline inside the same wrapper so it appears under the diagram
+                    if (timelineEl && timelineEl.parentNode) timelineEl.parentNode.appendChild(errPanel);
+                    else document.body.appendChild(errPanel);
+                }
+                errPanel.innerHTML = `<div class="error-header"><strong>${MSG.validationErrors}</strong></div><ul>` + errors.map(e => `<li>${e}</li>`).join('') + '</ul>';
+            } else {
+                if (existingErrPanel) existingErrPanel.remove();
             }
 
+            // Proceed to render even if there were validation issues (some modules may not be scheduled).
             render(modules, result.scheduled);
-            log('Auto-rendered ' + Object.keys(modules).length + ' modules');
-        }).catch(err => { console.error(err); log('Failed to read files: ' + err); });
+            log('Auto-rendered ' + Object.keys(modules).length + ' modules' + (errors.length > 0 ? ' (with validation warnings)' : ''));
+        }).catch(err => { console.error(err); log(MSG.failedToReadFiles + err); });
     });
 
     // Export current diagram as an SVG file for download
@@ -417,8 +506,13 @@
         try {
             // Build an SVG snapshot: copy paths and render module boxes as SVG rects/text
             const svgRect = svg.getBoundingClientRect();
-            const outW = parseFloat(svg.getAttribute('width')) || svgRect.width;
-            const outH = parseFloat(svg.getAttribute('height')) || svgRect.height;
+            // Use the timeline wrapper as the base rect so exported SVG can include
+            // the timeline plus any inline error panel appended under it.
+            const wrap = document.getElementById('timelineWrap') || timelineEl.parentNode || document.body;
+            const baseRect = wrap.getBoundingClientRect();
+            // compute output width/height from wrapper to ensure everything visible
+            const outW = Math.max(parseFloat(svg.getAttribute('width')) || svgRect.width, Math.ceil(baseRect.width));
+            const outH = Math.max(parseFloat(svg.getAttribute('height')) || svgRect.height, Math.ceil(baseRect.height));
             const xmlns = 'http://www.w3.org/2000/svg';
             const out = document.createElementNS(xmlns, 'svg');
             out.setAttribute('xmlns', xmlns);
@@ -437,18 +531,29 @@
                 .module-meta { font-size:11px; fill:#333; }
                 rect.module-rect { rx:6; }
                 .lane-label { font-size:14px; font-weight:700; fill:#111; }
+                /* error panel styles */
+                .error-svg-header { font-size:14px; font-weight:700; fill:#7a0b0b; }
+                .error-svg-line { font-size:12px; fill:#7a0b0b; }
             `;
             styleEl.textContent = cssText;
             out.appendChild(styleEl);
 
-            // clone connector paths and other SVG children
+            // clone connector paths and other SVG children, offset them so they align
+            // with the wrapper's origin (baseRect). Paths live in SVG coords (svgRect),
+            // so translate by svgRect - baseRect when placing into the output SVG.
+            const dx = svgRect.left - baseRect.left;
+            const dy = svgRect.top - baseRect.top;
+            const pathsGroup = document.createElementNS(xmlns, 'g');
+            if (dx !== 0 || dy !== 0) pathsGroup.setAttribute('transform', `translate(${dx}, ${dy})`);
             const clones = svg.querySelectorAll('path');
-            for (const c of clones) out.appendChild(c.cloneNode(true));
+            for (const c of clones) pathsGroup.appendChild(c.cloneNode(true));
+            out.appendChild(pathsGroup);
 
             // render module rectangles and labels
             const modulesGroup = document.createElementNS(xmlns, 'g');
             const moduleEls = timelineEl.querySelectorAll('.module');
-            const baseRect = svg.getBoundingClientRect();
+            // baseRect corresponds to the wrapper so we position modules relative to it
+            // (we already computed baseRect earlier)
             // render lane/thread labels
             const lanesGroup = document.createElementNS(xmlns, 'g');
             const laneEls = timelineEl.querySelectorAll('.lane');
@@ -524,6 +629,63 @@
             }
             out.appendChild(modulesGroup);
 
+            // If there is an inline error panel displayed below the timeline, render it into the SVG.
+            try {
+                const errEl = document.getElementById('errorPanel');
+                if (errEl) {
+                    const er = errEl.getBoundingClientRect();
+                    const ex = (er.left - baseRect.left);
+                    const ey = (er.top - baseRect.top);
+                    const ew = er.width;
+                    const eh = er.height;
+                    const errGroup = document.createElementNS(xmlns, 'g');
+
+                    const errBg = document.createElementNS(xmlns, 'rect');
+                    errBg.setAttribute('x', ex);
+                    errBg.setAttribute('y', ey);
+                    errBg.setAttribute('width', ew);
+                    errBg.setAttribute('height', eh);
+                    errBg.setAttribute('fill', '#fff4f4');
+                    errBg.setAttribute('stroke', '#e74c3c');
+                    errBg.setAttribute('stroke-width', '1');
+                    errGroup.appendChild(errBg);
+
+                    const accent = document.createElementNS(xmlns, 'rect');
+                    accent.setAttribute('x', ex);
+                    accent.setAttribute('y', ey);
+                    accent.setAttribute('width', 6);
+                    accent.setAttribute('height', eh);
+                    accent.setAttribute('fill', '#e74c3c');
+                    errGroup.appendChild(accent);
+
+                    const headerEl = errEl.querySelector('.error-header');
+                    let textY = ey + 18;
+                    if (headerEl) {
+                        const hText = document.createElementNS(xmlns, 'text');
+                        hText.setAttribute('class', 'error-svg-header');
+                        hText.setAttribute('x', ex + 12);
+                        hText.setAttribute('y', textY);
+                        hText.textContent = headerEl.textContent.trim();
+                        errGroup.appendChild(hText);
+                        textY += 18;
+                    }
+                    const items = errEl.querySelectorAll('li');
+                    let idx = 0;
+                    for (const li of items) {
+                        const t = document.createElementNS(xmlns, 'text');
+                        t.setAttribute('class', 'error-svg-line');
+                        t.setAttribute('x', ex + 12);
+                        t.setAttribute('y', textY + (idx * 14));
+                        t.textContent = '• ' + li.textContent.trim();
+                        errGroup.appendChild(t);
+                        idx++;
+                    }
+                    out.appendChild(errGroup);
+                }
+            } catch (e) {
+                console.warn('Failed to include error panel in SVG export', e);
+            }
+
             const serializer = new XMLSerializer();
             const str = serializer.serializeToString(out);
             const blob = new Blob([str], { type: 'image/svg+xml;charset=utf-8' });
@@ -537,7 +699,7 @@
             setTimeout(() => URL.revokeObjectURL(url), 2000);
         } catch (e) {
             console.error('Export SVG failed', e);
-            showPopup('Export failed', String(e));
+            showPopup(MSG.exportFailed, String(e));
         }
     });
 })();

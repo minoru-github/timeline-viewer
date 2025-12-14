@@ -148,3 +148,27 @@ header {
     border: none;
     cursor: pointer
 }
+
+/* inline error panel shown under the timeline when validation issues exist */
+.error-panel {
+    margin-top: 12px;
+    padding: 12px;
+    background: #fff4f4;
+    border-left: 6px solid #e74c3c;
+    color: #7a0b0b;
+    border-radius: 6px;
+}
+
+.error-panel .error-header {
+    margin-bottom: 6px;
+    font-weight: 700
+}
+
+.error-panel ul {
+    margin: 6px 0 0;
+    padding-left: 18px
+}
+
+.error-panel li {
+    margin: 4px 0
+}
