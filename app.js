@@ -19,6 +19,7 @@
         validationFailed: 'エラー: 検証に失敗しました — ポップアップを確認してください',
         failedToReadFiles: 'ファイルの読み込みに失敗しました: ',
         exportFailed: 'エクスポートに失敗しました'
+        ,ambiguousOrdering: '同一スレッド上の順序が不明: '
     };
 
     function log(s) { logEl.textContent = s }
@@ -375,7 +376,7 @@
             }
             const bad = Object.entries(threadStarts).filter(([t, arr]) => arr.length > 1);
             if (bad.length > 0) {
-                const lines = bad.map(([t, arr]) => `Thread ${t}: ${arr.join(', ')}`);
+                const lines = bad.map(([t, arr]) => `スレッド ${t}: ${arr.join(', ')}`);
                 errors.push(MSG.multipleThreadEntryModules + lines.join(' ; '));
             }
 
@@ -389,22 +390,22 @@
             for (const a in toSets) {
                 for (const b of toSets[a]) {
                     if (!(b in modules)) {
-                        inconsistencies.push(`Module ${a} has to->${b} but module ${b} not found`);
+                        inconsistencies.push(`モジュール ${b} が見つかりません（${a} の to に ${b} が含まれています）`);
                         continue;
                     }
                     if (!fromSets[b].has(a)) {
-                        inconsistencies.push(`Mismatch: ${a} lists ${b} in "to", but ${b} does not list ${a} in "from"`);
+                        inconsistencies.push(`不整合: ${a} は to に ${b} を含みますが、${b} の from に ${a} がありません`);
                     }
                 }
             }
             for (const a in fromSets) {
                 for (const b of fromSets[a]) {
                     if (!(b in modules)) {
-                        inconsistencies.push(`Module ${a} has from->${b} but module ${b} not found`);
+                        inconsistencies.push(`モジュール ${b} が見つかりません（${a} の from に ${b} が含まれています）`);
                         continue;
                     }
                     if (!toSets[b].has(a)) {
-                        inconsistencies.push(`Mismatch: ${a} lists ${b} in "from", but ${b} does not list ${a} in "to"`);
+                        inconsistencies.push(`不整合: ${a} は from に ${b} を含みますが、${b} の to に ${a} がありません`);
                     }
                 }
             }
@@ -443,12 +444,12 @@
                         const aToB = reachable[a] && reachable[a].has(b);
                         const bToA = reachable[b] && reachable[b].has(a);
                         if (!aToB && !bToA) {
-                            threadAmbiguities.push(`Thread ${t}: ambiguous ordering between ${a} and ${b}`);
+                            threadAmbiguities.push(`スレッド ${t}: ${a} と ${b} の実行順序が不明`);
                         }
                     }
                 }
             }
-            if (threadAmbiguities.length > 0) errors.push('Ambiguous ordering on same thread: ' + threadAmbiguities.join(' ; '));
+            if (threadAmbiguities.length > 0) errors.push(MSG.ambiguousOrdering + threadAmbiguities.join(' ; '));
 
             // schedule and check cycles
             const result = schedule(modules);
