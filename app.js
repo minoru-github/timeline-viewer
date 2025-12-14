@@ -216,10 +216,26 @@
 
         // compute box rects using DOM geometry so arrows align to edges
         const boxRects = {};
-        // ensure svg has the correct size
+        // ensure svg has the correct size and will scroll in sync with the timeline content
+        const contentH = threads.length * laneH + 80;
         svg.setAttribute('width', width);
-        svg.setAttribute('height', threads.length * laneH + 80);
-        svg.style.height = (threads.length * laneH + 80) + 'px';
+        svg.setAttribute('height', contentH);
+        // set explicit style sizes so CSS width:100% doesn't clip content width
+        svg.style.width = width + 'px';
+        svg.style.height = contentH + 'px';
+
+        // ensure the SVG sits inside the scrolling timeline content so it scrolls
+        // together with module boxes. This avoids needing CSS transforms that
+        // can desynchronize coordinates.
+        try {
+            if (svg.parentNode !== timelineEl) {
+                timelineEl.insertBefore(svg, timelineEl.firstChild);
+            }
+            // clear any previous transform state
+            svg.style.transform = '';
+        } catch (e) {
+            // ignore if DOM operations fail
+        }
         // reflow to get correct bounding boxes
         let svgRect = svg.getBoundingClientRect();
 
