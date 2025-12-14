@@ -19,7 +19,7 @@
         validationFailed: 'エラー: 検証に失敗しました — ポップアップを確認してください',
         failedToReadFiles: 'ファイルの読み込みに失敗しました: ',
         exportFailed: 'エクスポートに失敗しました'
-        ,ambiguousOrdering: '同一スレッド上の順序が不明: '
+        , ambiguousOrdering: '同一スレッド上の順序が不明: '
     };
 
     function log(s) { logEl.textContent = s }
