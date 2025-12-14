@@ -490,8 +490,13 @@
         try {
             // Build an SVG snapshot: copy paths and render module boxes as SVG rects/text
             const svgRect = svg.getBoundingClientRect();
-            const outW = parseFloat(svg.getAttribute('width')) || svgRect.width;
-            const outH = parseFloat(svg.getAttribute('height')) || svgRect.height;
+            // Use the timeline wrapper as the base rect so exported SVG can include
+            // the timeline plus any inline error panel appended under it.
+            const wrap = document.getElementById('timelineWrap') || timelineEl.parentNode || document.body;
+            const baseRect = wrap.getBoundingClientRect();
+            // compute output width/height from wrapper to ensure everything visible
+            const outW = Math.max(parseFloat(svg.getAttribute('width')) || svgRect.width, Math.ceil(baseRect.width));
+            const outH = Math.max(parseFloat(svg.getAttribute('height')) || svgRect.height, Math.ceil(baseRect.height));
             const xmlns = 'http://www.w3.org/2000/svg';
             const out = document.createElementNS(xmlns, 'svg');
             out.setAttribute('xmlns', xmlns);
@@ -517,14 +522,22 @@
             styleEl.textContent = cssText;
             out.appendChild(styleEl);
 
-            // clone connector paths and other SVG children
+            // clone connector paths and other SVG children, offset them so they align
+            // with the wrapper's origin (baseRect). Paths live in SVG coords (svgRect),
+            // so translate by svgRect - baseRect when placing into the output SVG.
+            const dx = svgRect.left - baseRect.left;
+            const dy = svgRect.top - baseRect.top;
+            const pathsGroup = document.createElementNS(xmlns, 'g');
+            if (dx !== 0 || dy !== 0) pathsGroup.setAttribute('transform', `translate(${dx}, ${dy})`);
             const clones = svg.querySelectorAll('path');
-            for (const c of clones) out.appendChild(c.cloneNode(true));
+            for (const c of clones) pathsGroup.appendChild(c.cloneNode(true));
+            out.appendChild(pathsGroup);
 
             // render module rectangles and labels
             const modulesGroup = document.createElementNS(xmlns, 'g');
             const moduleEls = timelineEl.querySelectorAll('.module');
-            const baseRect = svg.getBoundingClientRect();
+            // baseRect corresponds to the wrapper so we position modules relative to it
+            // (we already computed baseRect earlier)
             // render lane/thread labels
             const lanesGroup = document.createElementNS(xmlns, 'g');
             const laneEls = timelineEl.querySelectorAll('.lane');
