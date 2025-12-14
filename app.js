@@ -5,6 +5,22 @@
     const svg = document.getElementById('connectorLayer');
     const logEl = document.getElementById('log');
 
+    // i18n messages (Japanese)
+    const MSG = {
+        close: '閉じる',
+        validationErrors: '検証エラー',
+        jsonParseError: 'JSON解析エラー: ',
+        invalidJson: '無効なJSON',
+        notJsonFile: 'JSONファイルではありません',
+        invalidTimeValues: '無効な時間値: ',
+        multipleThreadEntryModules: '複数のスレッドエントリモジュール: ',
+        inconsistentFromTo: 'from/toの関係に不整合: ',
+        circularDependency: 'モジュール間で循環依存を検出: ',
+        validationFailed: 'エラー: 検証に失敗しました — ポップアップを確認してください',
+        failedToReadFiles: 'ファイルの読み込みに失敗しました: ',
+        exportFailed: 'エクスポートに失敗しました'
+    };
+
     function log(s) { logEl.textContent = s }
 
     // show an in-page popup message (error/info)
@@ -14,7 +30,7 @@
         const overlay = document.createElement('div'); overlay.id = 'seq-popup'; overlay.className = 'popup-overlay';
         const content = document.createElement('div'); content.className = 'popup-content';
         content.innerHTML = `<h3>${title}</h3><p>${msg}</p>`;
-        const btn = document.createElement('button'); btn.className = 'popup-close'; btn.textContent = 'Close';
+        const btn = document.createElement('button'); btn.className = 'popup-close'; btn.textContent = MSG.close;
         btn.onclick = () => overlay.remove();
         content.appendChild(btn);
         overlay.appendChild(content);
@@ -38,11 +54,11 @@
                     parsedAsJSON = true;
                     rows = Array.isArray(parsed) ? parsed : [parsed];
                 } catch (e) {
-                    parseErrors.push(`${name}: invalid JSON (${e.message})`);
+                    parseErrors.push(`${name}: ${MSG.invalidJson} (${e.message})`);
                     continue;
                 }
             } else {
-                parseErrors.push(`${name}: not a JSON file`);
+                parseErrors.push(`${name}: ${MSG.notJsonFile}`);
                 continue;
             }
 
@@ -332,7 +348,7 @@
             const errors = [];
             // collect parse errors (if any) instead of aborting immediately
             if (res.parseErrors && res.parseErrors.length > 0) {
-                for (const pe of res.parseErrors) errors.push('JSON parse error: ' + pe);
+                for (const pe of res.parseErrors) errors.push(MSG.jsonParseError + pe);
             }
 
             // validate: time values provided must be positive numbers (> 0)
@@ -345,7 +361,7 @@
                     }
                 }
             }
-            if (badTimes.length > 0) errors.push('Invalid time values: ' + badTimes.join(' ; '));
+            if (badTimes.length > 0) errors.push(MSG.invalidTimeValues + badTimes.join(' ; '));
 
             // validate: each thread should have at most one module with no `from` (entry module)
             const threadStarts = {};
@@ -360,7 +376,7 @@
             const bad = Object.entries(threadStarts).filter(([t, arr]) => arr.length > 1);
             if (bad.length > 0) {
                 const lines = bad.map(([t, arr]) => `Thread ${t}: ${arr.join(', ')}`);
-                errors.push('Multiple thread entry modules: ' + lines.join(' ; '));
+                errors.push(MSG.multipleThreadEntryModules + lines.join(' ; '));
             }
 
             // validate from/to consistency: for every a.to contains b, b.from must contain a, and vice versa
@@ -392,23 +408,23 @@
                     }
                 }
             }
-            if (inconsistencies.length > 0) errors.push('Inconsistent from/to relationships: ' + inconsistencies.join(' ; '));
+            if (inconsistencies.length > 0) errors.push(MSG.inconsistentFromTo + inconsistencies.join(' ; '));
 
             // schedule and check cycles
             const result = schedule(modules);
             if (result.cycles && result.cycles.length > 0) {
-                errors.push('Circular dependency detected among modules: ' + result.cycles.join(', '));
+                errors.push(MSG.circularDependency + result.cycles.join(', '));
             }
 
             if (errors.length > 0) {
-                showPopup('Validation errors', errors.map(e => ('* ' + e)).join('<br>'));
-                log('Error: validation failed — see popup');
+                showPopup(MSG.validationErrors, errors.map(e => ('* ' + e)).join('<br>'));
+                log(MSG.validationFailed);
                 return;
             }
 
             render(modules, result.scheduled);
             log('Auto-rendered ' + Object.keys(modules).length + ' modules');
-        }).catch(err => { console.error(err); log('Failed to read files: ' + err); });
+        }).catch(err => { console.error(err); log(MSG.failedToReadFiles + err); });
     });
 
     // Export current diagram as an SVG file for download
@@ -537,7 +553,7 @@
             setTimeout(() => URL.revokeObjectURL(url), 2000);
         } catch (e) {
             console.error('Export SVG failed', e);
-            showPopup('Export failed', String(e));
+            showPopup(MSG.exportFailed, String(e));
         }
     });
 })();
