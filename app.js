@@ -393,7 +393,7 @@
                         continue;
                     }
                     if (!fromSets[b].has(a)) {
-                        inconsistencies.push(`Mismatch: ${a} lists ${b} in to, but ${b} does not list ${a} in from`);
+                        inconsistencies.push(`Mismatch: ${a} lists ${b} in "to", but ${b} does not list ${a} in "from"`);
                     }
                 }
             }
@@ -404,7 +404,7 @@
                         continue;
                     }
                     if (!toSets[b].has(a)) {
-                        inconsistencies.push(`Mismatch: ${a} lists ${b} in from, but ${b} does not list ${a} in to`);
+                        inconsistencies.push(`Mismatch: ${a} lists ${b} in "from", but ${b} does not list ${a} in "to"`);
                     }
                 }
             }
