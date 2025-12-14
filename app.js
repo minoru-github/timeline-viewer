@@ -457,14 +457,30 @@
                 errors.push(MSG.circularDependency + result.cycles.join(', '));
             }
 
+            // If there are validation errors, show popup AND display them inline below the timeline,
+            // but still attempt to render the timeline so user can inspect diagram state.
+            const errorPanelId = 'errorPanel';
+            const existingErrPanel = document.getElementById(errorPanelId);
             if (errors.length > 0) {
                 showPopup(MSG.validationErrors, errors.map(e => ('* ' + e)).join('<br>'));
                 log(MSG.validationFailed);
-                return;
+                let errPanel = existingErrPanel;
+                if (!errPanel) {
+                    errPanel = document.createElement('div');
+                    errPanel.id = errorPanelId;
+                    errPanel.className = 'error-panel';
+                    // append after timeline inside the same wrapper so it appears under the diagram
+                    if (timelineEl && timelineEl.parentNode) timelineEl.parentNode.appendChild(errPanel);
+                    else document.body.appendChild(errPanel);
+                }
+                errPanel.innerHTML = `<div class="error-header"><strong>${MSG.validationErrors}</strong></div><ul>` + errors.map(e => `<li>${e}</li>`).join('') + '</ul>';
+            } else {
+                if (existingErrPanel) existingErrPanel.remove();
             }
 
+            // Proceed to render even if there were validation issues (some modules may not be scheduled).
             render(modules, result.scheduled);
-            log('Auto-rendered ' + Object.keys(modules).length + ' modules');
+            log('Auto-rendered ' + Object.keys(modules).length + ' modules' + (errors.length > 0 ? ' (with validation warnings)' : ''));
         }).catch(err => { console.error(err); log(MSG.failedToReadFiles + err); });
     });
 
