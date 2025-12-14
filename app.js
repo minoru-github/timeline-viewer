@@ -410,6 +410,46 @@
             }
             if (inconsistencies.length > 0) errors.push(MSG.inconsistentFromTo + inconsistencies.join(' ; '));
 
+            // validate same-thread ordering: modules on same thread must have a transitive dependency
+            // build adjacency (to) and compute reachability
+            const adj = {};
+            for (const name in modules) adj[name] = new Set((modules[name].to || []).filter(x => x));
+            const reachable = {};
+            for (const name in modules) {
+                const seen = new Set();
+                const stack = Array.from(adj[name] || []);
+                while (stack.length) {
+                    const v = stack.pop();
+                    if (!v || seen.has(v)) continue;
+                    seen.add(v);
+                    const next = adj[v];
+                    if (next) for (const w of next) if (!seen.has(w)) stack.push(w);
+                }
+                reachable[name] = seen;
+            }
+
+            const threadAmbiguities = [];
+            const byThread = {};
+            for (const name in modules) {
+                const t = String(modules[name].thread || '0');
+                (byThread[t] = byThread[t] || []).push(name);
+            }
+            for (const t in byThread) {
+                const arr = byThread[t];
+                if (arr.length <= 1) continue;
+                for (let i = 0; i < arr.length; i++) {
+                    for (let j = i + 1; j < arr.length; j++) {
+                        const a = arr[i], b = arr[j];
+                        const aToB = reachable[a] && reachable[a].has(b);
+                        const bToA = reachable[b] && reachable[b].has(a);
+                        if (!aToB && !bToA) {
+                            threadAmbiguities.push(`Thread ${t}: ambiguous ordering between ${a} and ${b}`);
+                        }
+                    }
+                }
+            }
+            if (threadAmbiguities.length > 0) errors.push('Ambiguous ordering on same thread: ' + threadAmbiguities.join(' ; '));
+
             // schedule and check cycles
             const result = schedule(modules);
             if (result.cycles && result.cycles.length > 0) {
