@@ -82,6 +82,7 @@ header {
     font-size: 13px;
     min-width: 48px;
     transition: transform .12s ease, box-shadow .12s ease;
+    z-index: 10;
 }
 
 .module .name {
@@ -99,13 +100,65 @@ header {
     box-shadow: 0 10px 24px rgba(30, 40, 80, 0.12)
 }
 
+/* drag & drop visuals */
+.lane.drag-over {
+    background: rgba(43, 109, 246, 0.04);
+}
+
+.module.dragging {
+    opacity: 0.7;
+    transform: scale(0.99);
+    box-shadow: 0 4px 10px rgba(30, 40, 80, 0.08);
+}
+
+/* visual for ctrl-selected source module */
+.module.ctrl-source {
+    outline: 3px dashed rgba(43, 109, 246, 0.5);
+    outline-offset: 2px;
+}
+
 .connector {
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
     height: 100%;
-    pointer-events: none
+    pointer-events: none;
+    z-index: 60;
+}
+
+/* ensure all SVG children also ignore pointer events so they don't block dragging */
+.connector * {
+    pointer-events: none;
+}
+
+.connector-path,
+.connector-tri {
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+.connector-path.clickable,
+.connector-tri.clickable {
+    opacity: 0.95;
+}
+
+.connector-path.selected,
+.connector-tri.selected {
+    stroke-width: 4;
+    opacity: 1;
+    filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.3));
+}
+
+/* when a connector path is clickable allow pointer events */
+.connector .clickable {
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+.connector .selected {
+    stroke-width: 4 !important;
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.12));
 }
 
 /* popup for errors */
@@ -171,4 +224,22 @@ header {
 
 .error-panel li {
     margin: 4px 0
+}
+
+/* invisible wider hit targets to make selecting connectors easier */
+.connector-hit {
+    pointer-events: auto;
+    stroke: transparent;
+    stroke-width: 14;
+    cursor: pointer;
+}
+
+.connector-tri-hit {
+    pointer-events: auto;
+    fill: transparent;
+    cursor: pointer;
+}
+
+.connector-path:hover {
+    stroke-width: 3;
 }

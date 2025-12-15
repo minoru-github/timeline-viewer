@@ -4,6 +4,65 @@
     const timelineEl = document.getElementById('timeline');
     const svg = document.getElementById('connectorLayer');
     const logEl = document.getElementById('log');
+    // current state kept so DnD can update threads and re-schedule
+    let currentModules = {};
+    let currentScheduled = {};
+    // undo history: list of module snapshots (deep-cloned objects)
+    const history = [];
+    const MAX_HISTORY = 100;
+    // redo stack for undone snapshots
+    const redoStack = [];
+
+    function pushRedo(modules) {
+        try {
+            const snap = JSON.parse(JSON.stringify(modules));
+            redoStack.push(snap);
+            if (redoStack.length > MAX_HISTORY) redoStack.shift();
+            setRedoButtonState(true);
+        } catch (e) { console.warn('pushRedo failed', e); }
+    }
+
+    function popRedo() {
+        if (redoStack.length === 0) return null;
+        const s = redoStack.pop();
+        setRedoButtonState(redoStack.length > 0);
+        return s;
+    }
+
+    function clearRedo() { redoStack.length = 0; setRedoButtonState(false); }
+
+    function setRedoButtonState(enabled) {
+        const btn = document.getElementById('redoBtn');
+        if (!btn) return;
+        btn.disabled = !enabled;
+    }
+
+    function pushHistory(modules) {
+        try {
+            const snap = JSON.parse(JSON.stringify(modules));
+            history.push(snap);
+            if (history.length > MAX_HISTORY) history.shift();
+            setUndoButtonState(true);
+            // a new user action invalidates redo history
+            clearRedo();
+        } catch (e) { console.warn('pushHistory failed', e); }
+    }
+
+    function popHistory() {
+        if (history.length === 0) return null;
+        const s = history.pop();
+        setUndoButtonState(history.length > 0);
+        return s;
+    }
+
+    function clearHistory() { history.length = 0; setUndoButtonState(false); clearRedo(); }
+
+
+    function setUndoButtonState(enabled) {
+        const btn = document.getElementById('undoBtn');
+        if (!btn) return;
+        btn.disabled = !enabled;
+    }
 
     // i18n messages (Japanese)
     const MSG = {
@@ -20,6 +79,7 @@
         failedToReadFiles: 'ファイルの読み込みに失敗しました: ',
         exportFailed: 'エクスポートに失敗しました'
         , ambiguousOrdering: '同一スレッド上の順序が不明: '
+        , renderFailed: 'レンダリング中にエラーが発生しました: '
     };
 
     function log(s) { logEl.textContent = s }
@@ -36,6 +96,59 @@
         content.appendChild(btn);
         overlay.appendChild(content);
         document.body.appendChild(overlay);
+    }
+
+    // Clear internal UI/state before selecting new files
+    if (filesEl) {
+        filesEl.addEventListener('click', () => {
+            try {
+                // clear in-memory structures
+                currentModules = {};
+                currentScheduled = {};
+                // clear history/redo stacks
+                clearHistory();
+                clearRedo();
+                // clear selection state
+                if (typeof selectedConnector !== 'undefined' && selectedConnector) {
+                    try { selectedConnector.classList.remove('selected'); } catch (e) { }
+                    selectedConnector = null;
+                }
+                clearCtrlSource();
+                // clear UI panels and timeline
+                displayValidationErrors([]);
+                if (timelineEl) timelineEl.innerHTML = '';
+                if (svg) svg.innerHTML = '';
+                const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = true;
+                setUndoButtonState(false);
+                setRedoButtonState(false);
+                // Reset the file input value so selecting the same file again will fire `change`
+                try { filesEl.value = ''; } catch (e) { }
+                log('Cleared current state for new file selection');
+            } catch (e) { console.warn('Failed to clear state on file select', e); }
+        });
+    }
+
+    // show or remove inline error panel and popup for given errors array
+    function displayValidationErrors(errors, opts) {
+        opts = opts || {};
+        const showPopupFlag = opts.popup === undefined ? true : Boolean(opts.popup);
+        const errorPanelId = 'errorPanel';
+        const existingErrPanel = document.getElementById(errorPanelId);
+        if (errors && errors.length > 0) {
+            if (showPopupFlag) showPopup(MSG.validationErrors, errors.map(e => ('* ' + e)).join('<br>'));
+            if (showPopupFlag) log(MSG.validationFailed);
+            let errPanel = existingErrPanel;
+            if (!errPanel) {
+                errPanel = document.createElement('div');
+                errPanel.id = errorPanelId;
+                errPanel.className = 'error-panel';
+                if (timelineEl && timelineEl.parentNode) timelineEl.parentNode.appendChild(errPanel);
+                else document.body.appendChild(errPanel);
+            }
+            errPanel.innerHTML = `<div class="error-header"><strong>${MSG.validationErrors}</strong></div><ul>` + errors.map(e => `<li>${e}</li>`).join('') + '</ul>';
+        } else {
+            if (existingErrPanel) existingErrPanel.remove();
+        }
     }
 
     // CSV parsing removed — app now accepts JSON-only inputs.
@@ -137,6 +250,384 @@
         return { scheduled, cycles };
     }
 
+    // Validate modules: returns { errors: string[], scheduled, cycles }
+    function validateModules(modules) {
+        const errors = [];
+        if (!modules) return { errors, scheduled: {}, cycles: [] };
+        // time value checks
+        const badTimes = [];
+        for (const name in modules) {
+            const m = modules[name];
+            if (m.timeProvided) {
+                if (!Number.isFinite(m.time) || m.time <= 0) badTimes.push(`${name}: ${m.time}`);
+            }
+        }
+        if (badTimes.length) errors.push(MSG.invalidTimeValues + badTimes.join(' ; '));
+
+        // thread entry checks (at most one module with no from per thread)
+        const threadStarts = {};
+        for (const name in modules) {
+            const m = modules[name];
+            if (!m.from || m.from.length === 0) {
+                const t = String(m.thread || '0');
+                threadStarts[t] = threadStarts[t] || [];
+                threadStarts[t].push(name);
+            }
+        }
+        const bad = Object.entries(threadStarts).filter(([t, arr]) => arr.length > 1);
+        if (bad.length > 0) {
+            const lines = bad.map(([t, arr]) => `スレッド ${t}: ${arr.join(', ')}`);
+            errors.push(MSG.multipleThreadEntryModules + lines.join(' ; '));
+        }
+
+        // from/to consistency
+        const inconsistencies = [];
+        const fromSets = {}, toSets = {};
+        for (const name in modules) {
+            fromSets[name] = new Set((modules[name].from || []).filter(x => x));
+            toSets[name] = new Set((modules[name].to || []).filter(x => x));
+        }
+        for (const a in toSets) {
+            for (const b of toSets[a]) {
+                if (!(b in modules)) {
+                    inconsistencies.push(`モジュール ${b} が見つかりません（${a} の to に ${b} が含まれています）`);
+                    continue;
+                }
+                if (!fromSets[b].has(a)) inconsistencies.push(`不整合: ${a} は to に ${b} を含みますが、${b} の from に ${a} がありません`);
+            }
+        }
+        for (const a in fromSets) {
+            for (const b of fromSets[a]) {
+                if (!(b in modules)) {
+                    inconsistencies.push(`モジュール ${b} が見つかりません（${a} の from に ${b} が含まれています）`);
+                    continue;
+                }
+                if (!toSets[b].has(a)) inconsistencies.push(`不整合: ${a} は from に ${b} を含みますが、${b} の to に ${a} がありません`);
+            }
+        }
+        if (inconsistencies.length > 0) errors.push(MSG.inconsistentFromTo + inconsistencies.join(' ; '));
+
+        // same-thread ambiguous ordering
+        const adj = {};
+        for (const name in modules) adj[name] = new Set((modules[name].to || []).filter(x => x));
+        const reachable = {};
+        for (const name in modules) {
+            const seen = new Set();
+            const stack = Array.from(adj[name] || []);
+            while (stack.length) {
+                const v = stack.pop();
+                if (!v || seen.has(v)) continue;
+                seen.add(v);
+                const next = adj[v];
+                if (next) for (const w of next) if (!seen.has(w)) stack.push(w);
+            }
+            reachable[name] = seen;
+        }
+        const threadAmbiguities = [];
+        const byThread = {};
+        for (const name in modules) {
+            const t = String(modules[name].thread || '0');
+            (byThread[t] = byThread[t] || []).push(name);
+        }
+        for (const t in byThread) {
+            const arr = byThread[t];
+            if (arr.length <= 1) continue;
+            for (let i = 0; i < arr.length; i++) {
+                for (let j = i + 1; j < arr.length; j++) {
+                    const a = arr[i], b = arr[j];
+                    const aToB = reachable[a] && reachable[a].has(b);
+                    const bToA = reachable[b] && reachable[b].has(a);
+                    if (!aToB && !bToA) threadAmbiguities.push(`スレッド ${t}: ${a} と ${b} の実行順序が不明`);
+                }
+            }
+        }
+        if (threadAmbiguities.length > 0) errors.push(MSG.ambiguousOrdering + threadAmbiguities.join(' ; '));
+
+        // cycles via schedule
+        const res = schedule(modules);
+        if (res.cycles && res.cycles.length > 0) errors.push(MSG.circularDependency + res.cycles.join(', '));
+
+        return { errors, scheduled: res.scheduled, cycles: res.cycles };
+    }
+
+    function attachDragHandlers(modules) {
+        // modules: current modules map; lanes and module elements exist in DOM
+        const moduleEls = timelineEl.querySelectorAll('.module');
+        moduleEls.forEach(el => {
+            el.setAttribute('draggable', 'true');
+            el.addEventListener('dragstart', (ev) => {
+                // If Control is held, disable dragging (Ctrl used for ctrl-click selection)
+                if (ev.ctrlKey) { ev.preventDefault(); return; }
+                const name = el.dataset.name;
+                try { ev.dataTransfer.setData('text/plain', name); ev.dataTransfer.effectAllowed = 'move'; } catch (e) { }
+                el.classList.add('dragging');
+            });
+            el.addEventListener('dragend', () => {
+                el.classList.remove('dragging');
+            });
+        });
+
+        // lane handlers must be attached separately to avoid referencing undefined `lane`
+        const laneEls = timelineEl.querySelectorAll('.lane');
+        laneEls.forEach(lane => {
+            lane.addEventListener('dragover', (ev) => {
+                ev.preventDefault();
+                try { ev.dataTransfer.dropEffect = 'move'; } catch (e) { }
+                lane.classList.add('drag-over');
+            });
+            lane.addEventListener('dragleave', () => lane.classList.remove('drag-over'));
+            lane.addEventListener('drop', (ev) => {
+                ev.preventDefault();
+                lane.classList.remove('drag-over');
+                let name = null;
+                try { name = ev.dataTransfer.getData('text/plain'); } catch (e) { }
+                if (!name) return;
+                const targetThread = lane.dataset.thread;
+                if (!modules[name]) return;
+                // record history snapshot before changing
+                pushHistory(modules);
+                const oldId = name;
+                const mObj = modules[oldId];
+                if (!mObj) return;
+                const prevThread = mObj.thread;
+                // compute short name and new id for the moved module
+                const shortName = mObj.shortName || (oldId.includes(':') ? oldId.split(':')[1] : oldId);
+                let newId = `${targetThread}:${shortName}`;
+                // ensure newId is unique (append suffix if collision)
+                if (newId !== oldId) {
+                    let suffix = 1;
+                    while (modules[newId]) {
+                        newId = `${targetThread}:${shortName}_${suffix++}`;
+                    }
+                }
+                // rename key in modules map and update module metadata
+                modules[newId] = mObj;
+                delete modules[oldId];
+                mObj.name = newId;
+                mObj.thread = String(targetThread);
+                mObj.shortName = shortName;
+                // update the DOM module element's data-name attribute so event handlers and queries remain consistent
+                try {
+                    const domEl = timelineEl.querySelector(`.module[data-name="${oldId}"]`);
+                    if (domEl) {
+                        domEl.dataset.name = newId;
+                        domEl.setAttribute('data-name', newId);
+                    }
+                } catch (e) {
+                    console.warn('Failed to update DOM data-name for moved module', e);
+                }
+                // update all references across modules: replace oldId with newId in from/to arrays
+                const allKeys = Object.keys(modules);
+                for (const k of allKeys) {
+                    const mm = modules[k];
+                    if (!mm) continue;
+                    if (Array.isArray(mm.from) && mm.from.length) {
+                        mm.from = mm.from.map(x => x === oldId ? newId : x);
+                    }
+                    if (Array.isArray(mm.to) && mm.to.length) {
+                        mm.to = mm.to.map(x => x === oldId ? newId : x);
+                    }
+                }
+                // update `name` variable to point to the moved module's new id for subsequent logic
+                name = newId;
+
+                // determine drop X coordinate relative to viewport
+                const dropX = ev.clientX;
+                // find other modules in the same lane (after change)
+                const candidates = Array.from(lane.querySelectorAll('.module'))
+                    .filter(el => el.dataset && el.dataset.name && el.dataset.name !== name);
+
+                // pick immediate left and right neighbors by center X
+                let leftNeighbor = null;
+                let rightNeighbor = null;
+                let leftDist = Infinity;
+                let rightDist = Infinity;
+                for (const el of candidates) {
+                    const r = el.getBoundingClientRect();
+                    const cx = r.left + r.width / 2;
+                    if (cx < dropX) {
+                        const d = dropX - cx;
+                        if (d < leftDist) { leftDist = d; leftNeighbor = { el, cx }; }
+                    } else {
+                        const d = cx - dropX;
+                        if (d < rightDist) { rightDist = d; rightNeighbor = { el, cx }; }
+                    }
+                }
+
+                // (connector selection and delete handler moved to top-level)
+
+                // ensure arrays exist on moved module
+                modules[name].from = modules[name].from || [];
+                modules[name].to = modules[name].to || [];
+
+                // if left neighbor exists, set left -> moved
+                if (leftNeighbor) {
+                    const otherName = leftNeighbor.el.dataset.name;
+                    modules[name].from = modules[name].from || [];
+                    modules[otherName].to = modules[otherName].to || [];
+                    if (!modules[name].from.includes(otherName)) modules[name].from.push(otherName);
+                    if (!modules[otherName].to.includes(name)) modules[otherName].to.push(name);
+                }
+
+                // if right neighbor exists, set moved -> right
+                if (rightNeighbor) {
+                    const otherName = rightNeighbor.el.dataset.name;
+                    modules[name].to = modules[name].to || [];
+                    modules[otherName].from = modules[otherName].from || [];
+                    if (!modules[name].to.includes(otherName)) modules[name].to.push(otherName);
+                    if (!modules[otherName].from.includes(name)) modules[otherName].from.push(name);
+                }
+
+                // dedupe arrays for involved modules
+                if (leftNeighbor) {
+                    const o = leftNeighbor.el.dataset.name;
+                    modules[o].to = Array.from(new Set(modules[o].to || []));
+                    modules[name].from = Array.from(new Set(modules[name].from || []));
+                }
+                if (rightNeighbor) {
+                    const o = rightNeighbor.el.dataset.name;
+                    modules[o].from = Array.from(new Set(modules[o].from || []));
+                    modules[name].to = Array.from(new Set(modules[name].to || []));
+                }
+
+                // If the moved module was inserted between a left and right neighbor,
+                // remove any direct dependency links between left and right (a <-> c),
+                // and ensure links are a -> moved and moved -> c.
+                if (leftNeighbor && rightNeighbor) {
+                    const aName = leftNeighbor.el.dataset.name;
+                    const cName = rightNeighbor.el.dataset.name;
+                    try {
+                        // remove any references between a and c in both to/from arrays
+                        if (modules[aName]) {
+                            modules[aName].to = (modules[aName].to || []).filter(x => x !== cName);
+                            modules[aName].from = (modules[aName].from || []).filter(x => x !== cName);
+                        }
+                        if (modules[cName]) {
+                            modules[cName].to = (modules[cName].to || []).filter(x => x !== aName);
+                            modules[cName].from = (modules[cName].from || []).filter(x => x !== aName);
+                        }
+                        // also ensure the moved module is present in the correct arrays (defensive)
+                        modules[name].from = Array.from(new Set(modules[name].from || []));
+                        modules[name].to = Array.from(new Set(modules[name].to || []));
+                    } catch (e) {
+                        console.warn('Failed to adjust neighbor relations after insert', e);
+                    }
+                }
+
+                const res = schedule(modules);
+                currentModules = modules;
+                currentScheduled = res.scheduled;
+                // if scheduling produced cycles, show them in the error panel and popup
+                const dropErrors = [];
+                if (res.cycles && res.cycles.length > 0) {
+                    dropErrors.push(MSG.circularDependency + res.cycles.join(', '));
+                    displayValidationErrors(dropErrors);
+                } else {
+                    // clear any previous error panel related to drop
+                    displayValidationErrors([]);
+                }
+                try {
+                    render(modules, res.scheduled);
+                    // build human-readable neighbor info
+                    let neighborInfo = '';
+                    if (leftNeighbor && rightNeighbor) {
+                        neighborInfo = ` (between ${leftNeighbor.el.dataset.name} and ${rightNeighbor.el.dataset.name})`;
+                    } else if (leftNeighbor) {
+                        neighborInfo = ` (after ${leftNeighbor.el.dataset.name})`;
+                    } else if (rightNeighbor) {
+                        neighborInfo = ` (before ${rightNeighbor.el.dataset.name})`;
+                    }
+                    log(`Moved ${name} → thread ${targetThread}` + neighborInfo);
+                } catch (e) {
+                    console.error('Render after drop failed', e);
+                    showPopup(MSG.renderFailed, String(e && e.message ? e.message : e));
+                    log(MSG.renderFailed + (e && e.message ? e.message : String(e)));
+                }
+            });
+        });
+    }
+
+    // Selection state and Delete-key handler for connectors (top-level)
+    let selectedConnector = null;
+    function selectArrow(el) {
+        if (selectedConnector && selectedConnector !== el) {
+            selectedConnector.classList.remove('selected');
+        }
+        if (selectedConnector === el) {
+            el.classList.remove('selected');
+            selectedConnector = null;
+            // disable delete button when nothing selected
+            const delBtn0 = document.getElementById('deleteArrowBtn'); if (delBtn0) delBtn0.disabled = true;
+            return;
+        }
+        el.classList.add('selected');
+        selectedConnector = el;
+        // enable delete button when selected
+        const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = false;
+    }
+
+    // Ctrl-click dependency builder state
+    let ctrlSourceName = null;
+    function setCtrlSource(name) {
+        // clear previous visual
+        if (ctrlSourceName) {
+            const prev = timelineEl.querySelector(`.module[data-name="${ctrlSourceName}"]`);
+            if (prev) prev.classList.remove('ctrl-source');
+        }
+        ctrlSourceName = name;
+        if (ctrlSourceName) {
+            const el = timelineEl.querySelector(`.module[data-name="${ctrlSourceName}"]`);
+            if (el) el.classList.add('ctrl-source');
+        }
+    }
+    function clearCtrlSource() {
+        if (!ctrlSourceName) return;
+        const el = timelineEl.querySelector(`.module[data-name="${ctrlSourceName}"]`);
+        if (el) el.classList.remove('ctrl-source');
+        ctrlSourceName = null;
+    }
+
+    // clear ctrl source when Control is released
+    document.addEventListener('keyup', (ev) => {
+        if (ev.key === 'Control') clearCtrlSource();
+    });
+
+    // click elsewhere clears selection
+    document.addEventListener('click', (ev) => {
+        if (!selectedConnector) return;
+        // if click target is within the selected connector, ignore
+        if (ev.target && (ev.target.classList && (ev.target.classList.contains('connector-path') || ev.target.classList.contains('connector-tri')))) return;
+        selectedConnector.classList.remove('selected');
+        selectedConnector = null;
+        const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = true;
+    });
+
+    document.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Delete' && ev.key !== 'Del') return;
+        if (!selectedConnector) return;
+        deleteSelected(true);
+    });
+
+    // shared deletion routine used by Delete key and Delete Arrow button
+    function deleteSelected(showPopup) {
+        if (!selectedConnector) return;
+        const src = selectedConnector.dataset.src;
+        const tgt = selectedConnector.dataset.tgt;
+        if (!src || !tgt) return;
+        try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
+        if (currentModules[src]) currentModules[src].to = (currentModules[src].to || []).filter(x => x !== tgt);
+        if (currentModules[tgt]) currentModules[tgt].from = (currentModules[tgt].from || []).filter(x => x !== src);
+        // clear selection and disable button
+        try { selectedConnector.classList.remove('selected'); } catch (e) { }
+        selectedConnector = null;
+        const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = true;
+        // validate, reschedule and render. popup shown only when showPopup===true
+        const vres = validateModules(currentModules);
+        currentScheduled = vres.scheduled || {};
+        displayValidationErrors(vres.errors || [], { popup: Boolean(showPopup) });
+        try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }], { popup: Boolean(showPopup) }); }
+    }
+
     function render(modules, scheduled) {
         timelineEl.innerHTML = '';
         svg.innerHTML = '';
@@ -144,7 +635,8 @@
         const colorMap = {};
         const palette = [
             '#1f78b4', '#33a02c', '#e31a1c', '#ff7f00', '#6a3d9a', '#b15928',
-            '#a6cee3', '#b2df8a', '#fb9a99', '#fdbf6f', '#cab2d6', '#ffff99'
+            '#a6cee3', '#b2df8a', '#fb9a99', '#fdbf6f', '#cab2d6', '#ffff99',
+            '#66c2a5', '#fc8d62', '#8da0cb', '#e78ac3', '#a6d854', '#ffd92f', '#d95f02', '#1b9e77', '#7570b3', '#e7298a'
         ];
         function colorFor(name) {
             if (colorMap[name]) return colorMap[name];
@@ -189,6 +681,7 @@
             const box = document.createElement('div');
             box.className = 'module';
             box.dataset.name = name;
+            box.dataset.thread = s.thread;
             const leftMargin = 200; // account for label area (increased)
             box.style.left = (s.start * scale + leftMargin) + 'px';
             // ensure a small visible width even for zero-duration modules
@@ -201,6 +694,35 @@
             // apply a left accent color to match outgoing arrows
             const boxColor = colorFor(name);
             box.style.borderLeft = `6px solid ${boxColor}`;
+            // click handler: support ctrl-click dependency creation (ctrl: select source -> click target)
+            box.addEventListener('click', (ev) => {
+                // only operate while Ctrl is held
+                if (!ev.ctrlKey) { clearCtrlSource(); return; }
+                // if no source selected yet, set this as source
+                if (!ctrlSourceName) { setCtrlSource(name); log(`Ctrl-source: ${name}`); return; }
+                // if source is same as clicked, ignore
+                if (ctrlSourceName === name) return;
+                // create dependency ctrlSourceName -> name
+                try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
+                // ensure modules exist in currentModules
+                currentModules[ctrlSourceName] = currentModules[ctrlSourceName] || (modules[ctrlSourceName] ? JSON.parse(JSON.stringify(modules[ctrlSourceName])) : { name: ctrlSourceName, thread: null, from: [], to: [], time: 0 });
+                currentModules[name] = currentModules[name] || (modules[name] ? JSON.parse(JSON.stringify(modules[name])) : { name: name, thread: null, from: [], to: [], time: 0 });
+                if (!currentModules[ctrlSourceName].to) currentModules[ctrlSourceName].to = [];
+                if (!currentModules[name].from) currentModules[name].from = [];
+                if (!currentModules[ctrlSourceName].to.includes(name)) currentModules[ctrlSourceName].to.push(name);
+                if (!currentModules[name].from.includes(ctrlSourceName)) currentModules[name].from.push(ctrlSourceName);
+                // dedupe
+                currentModules[ctrlSourceName].to = Array.from(new Set(currentModules[ctrlSourceName].to));
+                currentModules[name].from = Array.from(new Set(currentModules[name].from));
+                // clear ctrl visual
+                clearCtrlSource();
+                // validate, reschedule and render
+                const vres = validateModules(currentModules);
+                currentScheduled = vres.scheduled || {};
+                displayValidationErrors(vres.errors || []);
+                try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }]); }
+                log(`Added dependency ${ctrlSourceName} → ${name}`);
+            });
             lane.el = lane.el || lane;
             lane.el.appendChild(box);
         }
@@ -294,6 +816,7 @@
 
         // draw arrows for to relationships from right-edge to left-edge
         const svgNS = 'http://www.w3.org/2000/svg';
+        // Draw connectors and make them clickable/selectable for deletion
         for (const name in modules) {
             const m = modules[name];
             for (const tgt of m.to) {
@@ -307,6 +830,18 @@
                 const dx = Math.abs(endX - startX);
                 const mx = Math.max(60, dx * 0.55);
                 const d = `M ${startX} ${startY} C ${startX + mx} ${startY} ${endX - mx} ${endY} ${endX} ${endY}`;
+                // hit area (invisible, wide) for easier selection
+                const hit = document.createElementNS(svgNS, 'path');
+                hit.setAttribute('d', d);
+                hit.setAttribute('stroke', 'transparent');
+                hit.setAttribute('fill', 'none');
+                hit.setAttribute('stroke-width', '14');
+                hit.classList.add('connector-hit');
+                hit.dataset.src = name;
+                hit.dataset.tgt = tgt;
+                hit.addEventListener('click', (ev) => { ev.stopPropagation(); selectArrow(path); });
+                svg.appendChild(hit);
+
                 const path = document.createElementNS(svgNS, 'path');
                 path.setAttribute('d', d);
                 const col = colorFor(name);
@@ -314,6 +849,15 @@
                 path.setAttribute('fill', 'none');
                 path.setAttribute('stroke-width', '2');
                 path.setAttribute('stroke-linecap', 'round');
+                path.classList.add('clickable', 'connector-path');
+                // store source/target ids for deletion
+                path.dataset.src = name;
+                path.dataset.tgt = tgt;
+                // click selects
+                path.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    selectArrow(path);
+                });
                 svg.appendChild(path);
 
                 // arrow head as a small left-pointing triangle at endX,endY
@@ -321,13 +865,29 @@
                 const px = 8; // triangle length
                 const py = 5; // half height
                 const triD = `M ${endX} ${endY} L ${endX - px} ${endY - py} L ${endX - px} ${endY + py} Z`;
+                // hit triangle (invisible, slightly larger) to ease selection of arrowhead
+                const triHit = document.createElementNS(svgNS, 'path');
+                triHit.setAttribute('d', triD);
+                triHit.setAttribute('fill', 'transparent');
+                triHit.classList.add('connector-tri-hit');
+                triHit.dataset.src = name;
+                triHit.dataset.tgt = tgt;
+                triHit.addEventListener('click', (ev) => { ev.stopPropagation(); selectArrow(path); });
+                svg.appendChild(triHit);
+
                 tri.setAttribute('d', triD);
                 tri.setAttribute('fill', col);
+                tri.classList.add('clickable', 'connector-tri');
+                tri.dataset.src = name;
+                tri.dataset.tgt = tgt;
+                tri.addEventListener('click', (ev) => { ev.stopPropagation(); selectArrow(path); });
                 svg.appendChild(tri);
             }
         }
 
         timelineEl.style.minWidth = width + 'px';
+        // attach drag handlers so modules can be moved between lanes
+        try { attachDragHandlers(modules); } catch (e) { console.warn('attachDragHandlers failed', e); }
     }
 
     function handleFiles(fileList) {
@@ -353,6 +913,8 @@
         handleFiles(fl).then(filesMap => {
             const res = buildModulesFromFiles(filesMap);
             const modules = res.modules || {};
+            // new load -> clear undo history
+            clearHistory();
             const errors = [];
             // collect parse errors (if any) instead of aborting immediately
             if (res.parseErrors && res.parseErrors.length > 0) {
@@ -464,27 +1026,12 @@
                 errors.push(MSG.circularDependency + result.cycles.join(', '));
             }
 
-            // If there are validation errors, show popup AND display them inline below the timeline,
-            // but still attempt to render the timeline so user can inspect diagram state.
-            const errorPanelId = 'errorPanel';
-            const existingErrPanel = document.getElementById(errorPanelId);
-            if (errors.length > 0) {
-                showPopup(MSG.validationErrors, errors.map(e => ('* ' + e)).join('<br>'));
-                log(MSG.validationFailed);
-                let errPanel = existingErrPanel;
-                if (!errPanel) {
-                    errPanel = document.createElement('div');
-                    errPanel.id = errorPanelId;
-                    errPanel.className = 'error-panel';
-                    // append after timeline inside the same wrapper so it appears under the diagram
-                    if (timelineEl && timelineEl.parentNode) timelineEl.parentNode.appendChild(errPanel);
-                    else document.body.appendChild(errPanel);
-                }
-                errPanel.innerHTML = `<div class="error-header"><strong>${MSG.validationErrors}</strong></div><ul>` + errors.map(e => `<li>${e}</li>`).join('') + '</ul>';
-            } else {
-                if (existingErrPanel) existingErrPanel.remove();
-            }
+            // show inline + popup errors (if any)
+            displayValidationErrors(errors);
 
+            // Keep current state so DnD can update threads and re-schedule
+            currentModules = modules;
+            currentScheduled = result.scheduled;
             // Proceed to render even if there were validation issues (some modules may not be scheduled).
             render(modules, result.scheduled);
             log('Auto-rendered ' + Object.keys(modules).length + ' modules' + (errors.length > 0 ? ' (with validation warnings)' : ''));
@@ -693,4 +1240,103 @@
             showPopup(MSG.exportFailed, String(e));
         }
     });
+
+    // Undo button handler
+    const undoBtn = document.getElementById('undoBtn');
+    if (undoBtn) {
+        setUndoButtonState(false);
+        undoBtn.addEventListener('click', () => {
+            const prev = popHistory();
+            if (!prev) { log('Nothing to undo'); return; }
+            // push current state to redo so user can redo the undo
+            try { pushRedo(currentModules || {}); } catch (e) { console.warn(e); }
+            // prev is a snapshot of modules; restore threads and other fields
+            currentModules = prev;
+            const vres = validateModules(currentModules);
+            currentScheduled = vres.scheduled || {};
+            // show only inline errors for undo/redo (no popup)
+            displayValidationErrors(vres.errors || [], { popup: false });
+            render(currentModules, currentScheduled);
+            log('Undo applied');
+        });
+    }
+
+    // Redo button handler
+    const redoBtn = document.getElementById('redoBtn');
+    if (redoBtn) {
+        setRedoButtonState(false);
+        redoBtn.addEventListener('click', () => {
+            const next = popRedo();
+            if (!next) { log('Nothing to redo'); return; }
+            // before re-applying redo snapshot, push current state to history so undo remains possible
+            try { pushHistory(currentModules || {}); } catch (e) { console.warn(e); }
+            currentModules = next;
+            const vres = validateModules(currentModules);
+            currentScheduled = vres.scheduled || {};
+            // show only inline errors for undo/redo (no popup)
+            displayValidationErrors(vres.errors || [], { popup: false });
+            render(currentModules, currentScheduled);
+            log('Redo applied');
+        });
+    }
+
+    // Delete Arrow button handler (UI button)
+    const deleteBtn = document.getElementById('deleteArrowBtn');
+    if (deleteBtn) {
+        deleteBtn.disabled = true;
+        deleteBtn.addEventListener('click', () => {
+            // no extra popup suppression here — reuse deleteSelected with popup
+            deleteSelected(true);
+            log('Deleted selected arrow');
+        });
+    }
+
+    // Export snapshot as JSON for external save into workspace/output
+    const exportJsonBtn = document.getElementById('exportJsonBtn');
+    if (exportJsonBtn) {
+        exportJsonBtn.addEventListener('click', () => {
+            try {
+                const snap = JSON.parse(JSON.stringify(currentModules || {}));
+                // group by thread and build arrays in input-spec format
+                const byThread = {};
+                for (const id of Object.keys(snap)) {
+                    const m = snap[id];
+                    const thread = String(m.thread || (id.includes(':') ? id.split(':')[0] : '0'));
+                    const short = m.shortName || (id.includes(':') ? id.split(':')[1] : id);
+                    const entry = { module: short };
+                    if (m.time != null) entry.time = m.time;
+                    if (Array.isArray(m.from) && m.from.length) entry.from = m.from.map(x => {
+                        const parts = String(x).split(':');
+                        return { thread: parts[0] || thread, module: parts[1] || parts[0] };
+                    });
+                    if (Array.isArray(m.to) && m.to.length) entry.to = m.to.map(x => {
+                        const parts = String(x).split(':');
+                        return { thread: parts[0] || thread, module: parts[1] || parts[0] };
+                    });
+                    (byThread[thread] = byThread[thread] || []).push(entry);
+                }
+
+                // trigger downloads for each thread file
+                const threads = Object.keys(byThread).sort();
+                if (threads.length === 0) { showPopup('Export', 'No modules to export'); return; }
+                for (const t of threads) {
+                    const content = JSON.stringify(byThread[t], null, 2);
+                    const blob = new Blob([content], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${t}.json`;
+                    document.body.appendChild(a);
+                    // small timeout to allow multiple downloads to register
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 2000);
+                }
+                log('Exported ' + threads.length + ' JSON files (one per thread)');
+            } catch (e) {
+                console.error('Export per-thread JSON failed', e);
+                showPopup('Export failed', String(e));
+            }
+        });
+    }
 })();
