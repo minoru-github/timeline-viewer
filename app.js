@@ -356,9 +356,50 @@
                 if (!modules[name]) return;
                 // record history snapshot before changing
                 pushHistory(modules);
-                const prevThread = modules[name].thread;
-                // update module's thread
-                modules[name].thread = String(targetThread);
+                const oldId = name;
+                const mObj = modules[oldId];
+                if (!mObj) return;
+                const prevThread = mObj.thread;
+                // compute short name and new id for the moved module
+                const shortName = mObj.shortName || (oldId.includes(':') ? oldId.split(':')[1] : oldId);
+                let newId = `${targetThread}:${shortName}`;
+                // ensure newId is unique (append suffix if collision)
+                if (newId !== oldId) {
+                    let suffix = 1;
+                    while (modules[newId]) {
+                        newId = `${targetThread}:${shortName}_${suffix++}`;
+                    }
+                }
+                // rename key in modules map and update module metadata
+                modules[newId] = mObj;
+                delete modules[oldId];
+                mObj.name = newId;
+                mObj.thread = String(targetThread);
+                mObj.shortName = shortName;
+                // update the DOM module element's data-name attribute so event handlers and queries remain consistent
+                try {
+                    const domEl = timelineEl.querySelector(`.module[data-name="${oldId}"]`);
+                    if (domEl) {
+                        domEl.dataset.name = newId;
+                        domEl.setAttribute('data-name', newId);
+                    }
+                } catch (e) {
+                    console.warn('Failed to update DOM data-name for moved module', e);
+                }
+                // update all references across modules: replace oldId with newId in from/to arrays
+                const allKeys = Object.keys(modules);
+                for (const k of allKeys) {
+                    const mm = modules[k];
+                    if (!mm) continue;
+                    if (Array.isArray(mm.from) && mm.from.length) {
+                        mm.from = mm.from.map(x => x === oldId ? newId : x);
+                    }
+                    if (Array.isArray(mm.to) && mm.to.length) {
+                        mm.to = mm.to.map(x => x === oldId ? newId : x);
+                    }
+                }
+                // update `name` variable to point to the moved module's new id for subsequent logic
+                name = newId;
 
                 // determine drop X coordinate relative to viewport
                 const dropX = ev.clientX;
