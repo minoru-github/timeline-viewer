@@ -4,6 +4,65 @@
     const timelineEl = document.getElementById('timeline');
     const svg = document.getElementById('connectorLayer');
     const logEl = document.getElementById('log');
+    // current state kept so DnD can update threads and re-schedule
+    let currentModules = {};
+    let currentScheduled = {};
+    // undo history: list of module snapshots (deep-cloned objects)
+    const history = [];
+    const MAX_HISTORY = 100;
+    // redo stack for undone snapshots
+    const redoStack = [];
+
+    function pushRedo(modules) {
+        try {
+            const snap = JSON.parse(JSON.stringify(modules));
+            redoStack.push(snap);
+            if (redoStack.length > MAX_HISTORY) redoStack.shift();
+            setRedoButtonState(true);
+        } catch (e) { console.warn('pushRedo failed', e); }
+    }
+
+    function popRedo() {
+        if (redoStack.length === 0) return null;
+        const s = redoStack.pop();
+        setRedoButtonState(redoStack.length > 0);
+        return s;
+    }
+
+    function clearRedo() { redoStack.length = 0; setRedoButtonState(false); }
+
+    function setRedoButtonState(enabled) {
+        const btn = document.getElementById('redoBtn');
+        if (!btn) return;
+        btn.disabled = !enabled;
+    }
+
+    function pushHistory(modules) {
+        try {
+            const snap = JSON.parse(JSON.stringify(modules));
+            history.push(snap);
+            if (history.length > MAX_HISTORY) history.shift();
+            setUndoButtonState(true);
+            // a new user action invalidates redo history
+            clearRedo();
+        } catch (e) { console.warn('pushHistory failed', e); }
+    }
+
+    function popHistory() {
+        if (history.length === 0) return null;
+        const s = history.pop();
+        setUndoButtonState(history.length > 0);
+        return s;
+    }
+
+    function clearHistory() { history.length = 0; setUndoButtonState(false); clearRedo(); }
+
+
+    function setUndoButtonState(enabled) {
+        const btn = document.getElementById('undoBtn');
+        if (!btn) return;
+        btn.disabled = !enabled;
+    }
 
     // i18n messages (Japanese)
     const MSG = {
@@ -20,6 +79,7 @@
         failedToReadFiles: 'ファイルの読み込みに失敗しました: ',
         exportFailed: 'エクスポートに失敗しました'
         , ambiguousOrdering: '同一スレッド上の順序が不明: '
+        , renderFailed: 'レンダリング中にエラーが発生しました: '
     };
 
     function log(s) { logEl.textContent = s }
@@ -36,6 +96,29 @@
         content.appendChild(btn);
         overlay.appendChild(content);
         document.body.appendChild(overlay);
+    }
+
+    // show or remove inline error panel and popup for given errors array
+    function displayValidationErrors(errors, opts) {
+        opts = opts || {};
+        const showPopupFlag = opts.popup === undefined ? true : Boolean(opts.popup);
+        const errorPanelId = 'errorPanel';
+        const existingErrPanel = document.getElementById(errorPanelId);
+        if (errors && errors.length > 0) {
+            if (showPopupFlag) showPopup(MSG.validationErrors, errors.map(e => ('* ' + e)).join('<br>'));
+            if (showPopupFlag) log(MSG.validationFailed);
+            let errPanel = existingErrPanel;
+            if (!errPanel) {
+                errPanel = document.createElement('div');
+                errPanel.id = errorPanelId;
+                errPanel.className = 'error-panel';
+                if (timelineEl && timelineEl.parentNode) timelineEl.parentNode.appendChild(errPanel);
+                else document.body.appendChild(errPanel);
+            }
+            errPanel.innerHTML = `<div class="error-header"><strong>${MSG.validationErrors}</strong></div><ul>` + errors.map(e => `<li>${e}</li>`).join('') + '</ul>';
+        } else {
+            if (existingErrPanel) existingErrPanel.remove();
+        }
     }
 
     // CSV parsing removed — app now accepts JSON-only inputs.
@@ -137,6 +220,291 @@
         return { scheduled, cycles };
     }
 
+    // Validate modules: returns { errors: string[], scheduled, cycles }
+    function validateModules(modules) {
+        const errors = [];
+        if (!modules) return { errors, scheduled: {}, cycles: [] };
+        // time value checks
+        const badTimes = [];
+        for (const name in modules) {
+            const m = modules[name];
+            if (m.timeProvided) {
+                if (!Number.isFinite(m.time) || m.time <= 0) badTimes.push(`${name}: ${m.time}`);
+            }
+        }
+        if (badTimes.length) errors.push(MSG.invalidTimeValues + badTimes.join(' ; '));
+
+        // thread entry checks (at most one module with no from per thread)
+        const threadStarts = {};
+        for (const name in modules) {
+            const m = modules[name];
+            if (!m.from || m.from.length === 0) {
+                const t = String(m.thread || '0');
+                threadStarts[t] = threadStarts[t] || [];
+                threadStarts[t].push(name);
+            }
+        }
+        const bad = Object.entries(threadStarts).filter(([t, arr]) => arr.length > 1);
+        if (bad.length > 0) {
+            const lines = bad.map(([t, arr]) => `スレッド ${t}: ${arr.join(', ')}`);
+            errors.push(MSG.multipleThreadEntryModules + lines.join(' ; '));
+        }
+
+        // from/to consistency
+        const inconsistencies = [];
+        const fromSets = {}, toSets = {};
+        for (const name in modules) {
+            fromSets[name] = new Set((modules[name].from || []).filter(x => x));
+            toSets[name] = new Set((modules[name].to || []).filter(x => x));
+        }
+        for (const a in toSets) {
+            for (const b of toSets[a]) {
+                if (!(b in modules)) {
+                    inconsistencies.push(`モジュール ${b} が見つかりません（${a} の to に ${b} が含まれています）`);
+                    continue;
+                }
+                if (!fromSets[b].has(a)) inconsistencies.push(`不整合: ${a} は to に ${b} を含みますが、${b} の from に ${a} がありません`);
+            }
+        }
+        for (const a in fromSets) {
+            for (const b of fromSets[a]) {
+                if (!(b in modules)) {
+                    inconsistencies.push(`モジュール ${b} が見つかりません（${a} の from に ${b} が含まれています）`);
+                    continue;
+                }
+                if (!toSets[b].has(a)) inconsistencies.push(`不整合: ${a} は from に ${b} を含みますが、${b} の to に ${a} がありません`);
+            }
+        }
+        if (inconsistencies.length > 0) errors.push(MSG.inconsistentFromTo + inconsistencies.join(' ; '));
+
+        // same-thread ambiguous ordering
+        const adj = {};
+        for (const name in modules) adj[name] = new Set((modules[name].to || []).filter(x => x));
+        const reachable = {};
+        for (const name in modules) {
+            const seen = new Set();
+            const stack = Array.from(adj[name] || []);
+            while (stack.length) {
+                const v = stack.pop();
+                if (!v || seen.has(v)) continue;
+                seen.add(v);
+                const next = adj[v];
+                if (next) for (const w of next) if (!seen.has(w)) stack.push(w);
+            }
+            reachable[name] = seen;
+        }
+        const threadAmbiguities = [];
+        const byThread = {};
+        for (const name in modules) {
+            const t = String(modules[name].thread || '0');
+            (byThread[t] = byThread[t] || []).push(name);
+        }
+        for (const t in byThread) {
+            const arr = byThread[t];
+            if (arr.length <= 1) continue;
+            for (let i = 0; i < arr.length; i++) {
+                for (let j = i + 1; j < arr.length; j++) {
+                    const a = arr[i], b = arr[j];
+                    const aToB = reachable[a] && reachable[a].has(b);
+                    const bToA = reachable[b] && reachable[b].has(a);
+                    if (!aToB && !bToA) threadAmbiguities.push(`スレッド ${t}: ${a} と ${b} の実行順序が不明`);
+                }
+            }
+        }
+        if (threadAmbiguities.length > 0) errors.push(MSG.ambiguousOrdering + threadAmbiguities.join(' ; '));
+
+        // cycles via schedule
+        const res = schedule(modules);
+        if (res.cycles && res.cycles.length > 0) errors.push(MSG.circularDependency + res.cycles.join(', '));
+
+        return { errors, scheduled: res.scheduled, cycles: res.cycles };
+    }
+
+    function attachDragHandlers(modules) {
+        // modules: current modules map; lanes and module elements exist in DOM
+        const moduleEls = timelineEl.querySelectorAll('.module');
+        moduleEls.forEach(el => {
+            el.setAttribute('draggable', 'true');
+            el.addEventListener('dragstart', (ev) => {
+                const name = el.dataset.name;
+                try { ev.dataTransfer.setData('text/plain', name); ev.dataTransfer.effectAllowed = 'move'; } catch (e) { }
+                el.classList.add('dragging');
+            });
+            el.addEventListener('dragend', () => {
+                el.classList.remove('dragging');
+            });
+        });
+
+        // lane handlers must be attached separately to avoid referencing undefined `lane`
+        const laneEls = timelineEl.querySelectorAll('.lane');
+        laneEls.forEach(lane => {
+            lane.addEventListener('dragover', (ev) => {
+                ev.preventDefault();
+                try { ev.dataTransfer.dropEffect = 'move'; } catch (e) { }
+                lane.classList.add('drag-over');
+            });
+            lane.addEventListener('dragleave', () => lane.classList.remove('drag-over'));
+            lane.addEventListener('drop', (ev) => {
+                ev.preventDefault();
+                lane.classList.remove('drag-over');
+                let name = null;
+                try { name = ev.dataTransfer.getData('text/plain'); } catch (e) { }
+                if (!name) return;
+                const targetThread = lane.dataset.thread;
+                if (!modules[name]) return;
+                // record history snapshot before changing
+                pushHistory(modules);
+                const prevThread = modules[name].thread;
+                // update module's thread
+                modules[name].thread = String(targetThread);
+
+                // determine drop X coordinate relative to viewport
+                const dropX = ev.clientX;
+                // find other modules in the same lane (after change)
+                const candidates = Array.from(lane.querySelectorAll('.module'))
+                    .filter(el => el.dataset && el.dataset.name && el.dataset.name !== name);
+
+                // pick immediate left and right neighbors by center X
+                let leftNeighbor = null;
+                let rightNeighbor = null;
+                let leftDist = Infinity;
+                let rightDist = Infinity;
+                for (const el of candidates) {
+                    const r = el.getBoundingClientRect();
+                    const cx = r.left + r.width / 2;
+                    if (cx < dropX) {
+                        const d = dropX - cx;
+                        if (d < leftDist) { leftDist = d; leftNeighbor = { el, cx }; }
+                    } else {
+                        const d = cx - dropX;
+                        if (d < rightDist) { rightDist = d; rightNeighbor = { el, cx }; }
+                    }
+                }
+
+                // (connector selection and delete handler moved to top-level)
+
+                // ensure arrays exist on moved module
+                modules[name].from = modules[name].from || [];
+                modules[name].to = modules[name].to || [];
+
+                // if left neighbor exists, set left -> moved
+                if (leftNeighbor) {
+                    const otherName = leftNeighbor.el.dataset.name;
+                    modules[name].from = modules[name].from || [];
+                    modules[otherName].to = modules[otherName].to || [];
+                    if (!modules[name].from.includes(otherName)) modules[name].from.push(otherName);
+                    if (!modules[otherName].to.includes(name)) modules[otherName].to.push(name);
+                }
+
+                // if right neighbor exists, set moved -> right
+                if (rightNeighbor) {
+                    const otherName = rightNeighbor.el.dataset.name;
+                    modules[name].to = modules[name].to || [];
+                    modules[otherName].from = modules[otherName].from || [];
+                    if (!modules[name].to.includes(otherName)) modules[name].to.push(otherName);
+                    if (!modules[otherName].from.includes(name)) modules[otherName].from.push(name);
+                }
+
+                // dedupe arrays for involved modules
+                if (leftNeighbor) {
+                    const o = leftNeighbor.el.dataset.name;
+                    modules[o].to = Array.from(new Set(modules[o].to || []));
+                    modules[name].from = Array.from(new Set(modules[name].from || []));
+                }
+                if (rightNeighbor) {
+                    const o = rightNeighbor.el.dataset.name;
+                    modules[o].from = Array.from(new Set(modules[o].from || []));
+                    modules[name].to = Array.from(new Set(modules[name].to || []));
+                }
+
+                const res = schedule(modules);
+                currentModules = modules;
+                currentScheduled = res.scheduled;
+                // if scheduling produced cycles, show them in the error panel and popup
+                const dropErrors = [];
+                if (res.cycles && res.cycles.length > 0) {
+                    dropErrors.push(MSG.circularDependency + res.cycles.join(', '));
+                    displayValidationErrors(dropErrors);
+                } else {
+                    // clear any previous error panel related to drop
+                    displayValidationErrors([]);
+                }
+                try {
+                    render(modules, res.scheduled);
+                    // build human-readable neighbor info
+                    let neighborInfo = '';
+                    if (leftNeighbor && rightNeighbor) {
+                        neighborInfo = ` (between ${leftNeighbor.el.dataset.name} and ${rightNeighbor.el.dataset.name})`;
+                    } else if (leftNeighbor) {
+                        neighborInfo = ` (after ${leftNeighbor.el.dataset.name})`;
+                    } else if (rightNeighbor) {
+                        neighborInfo = ` (before ${rightNeighbor.el.dataset.name})`;
+                    }
+                    log(`Moved ${name} → thread ${targetThread}` + neighborInfo);
+                } catch (e) {
+                    console.error('Render after drop failed', e);
+                    showPopup(MSG.renderFailed, String(e && e.message ? e.message : e));
+                    log(MSG.renderFailed + (e && e.message ? e.message : String(e)));
+                }
+            });
+        });
+    }
+
+    // Selection state and Delete-key handler for connectors (top-level)
+    let selectedConnector = null;
+    function selectArrow(el) {
+        if (selectedConnector && selectedConnector !== el) {
+            selectedConnector.classList.remove('selected');
+        }
+        if (selectedConnector === el) {
+            el.classList.remove('selected');
+            selectedConnector = null;
+            // disable delete button when nothing selected
+            const delBtn0 = document.getElementById('deleteArrowBtn'); if (delBtn0) delBtn0.disabled = true;
+            return;
+        }
+        el.classList.add('selected');
+        selectedConnector = el;
+        // enable delete button when selected
+        const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = false;
+    }
+
+    // click elsewhere clears selection
+    document.addEventListener('click', (ev) => {
+        if (!selectedConnector) return;
+        // if click target is within the selected connector, ignore
+        if (ev.target && (ev.target.classList && (ev.target.classList.contains('connector-path') || ev.target.classList.contains('connector-tri')))) return;
+        selectedConnector.classList.remove('selected');
+        selectedConnector = null;
+        const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = true;
+    });
+
+    document.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Delete' && ev.key !== 'Del') return;
+        if (!selectedConnector) return;
+        deleteSelected(true);
+    });
+
+    // shared deletion routine used by Delete key and Delete Arrow button
+    function deleteSelected(showPopup) {
+        if (!selectedConnector) return;
+        const src = selectedConnector.dataset.src;
+        const tgt = selectedConnector.dataset.tgt;
+        if (!src || !tgt) return;
+        try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
+        if (currentModules[src]) currentModules[src].to = (currentModules[src].to || []).filter(x => x !== tgt);
+        if (currentModules[tgt]) currentModules[tgt].from = (currentModules[tgt].from || []).filter(x => x !== src);
+        // clear selection and disable button
+        try { selectedConnector.classList.remove('selected'); } catch (e) { }
+        selectedConnector = null;
+        const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = true;
+        // validate, reschedule and render. popup shown only when showPopup===true
+        const vres = validateModules(currentModules);
+        currentScheduled = vres.scheduled || {};
+        displayValidationErrors(vres.errors || [], { popup: Boolean(showPopup) });
+        try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }], { popup: Boolean(showPopup) }); }
+    }
+
     function render(modules, scheduled) {
         timelineEl.innerHTML = '';
         svg.innerHTML = '';
@@ -144,7 +512,8 @@
         const colorMap = {};
         const palette = [
             '#1f78b4', '#33a02c', '#e31a1c', '#ff7f00', '#6a3d9a', '#b15928',
-            '#a6cee3', '#b2df8a', '#fb9a99', '#fdbf6f', '#cab2d6', '#ffff99'
+            '#a6cee3', '#b2df8a', '#fb9a99', '#fdbf6f', '#cab2d6', '#ffff99',
+            '#66c2a5', '#fc8d62', '#8da0cb', '#e78ac3', '#a6d854', '#ffd92f', '#d95f02', '#1b9e77', '#7570b3', '#e7298a'
         ];
         function colorFor(name) {
             if (colorMap[name]) return colorMap[name];
@@ -189,6 +558,7 @@
             const box = document.createElement('div');
             box.className = 'module';
             box.dataset.name = name;
+            box.dataset.thread = s.thread;
             const leftMargin = 200; // account for label area (increased)
             box.style.left = (s.start * scale + leftMargin) + 'px';
             // ensure a small visible width even for zero-duration modules
@@ -294,6 +664,7 @@
 
         // draw arrows for to relationships from right-edge to left-edge
         const svgNS = 'http://www.w3.org/2000/svg';
+        // Draw connectors and make them clickable/selectable for deletion
         for (const name in modules) {
             const m = modules[name];
             for (const tgt of m.to) {
@@ -314,6 +685,15 @@
                 path.setAttribute('fill', 'none');
                 path.setAttribute('stroke-width', '2');
                 path.setAttribute('stroke-linecap', 'round');
+                path.classList.add('clickable', 'connector-path');
+                // store source/target ids for deletion
+                path.dataset.src = name;
+                path.dataset.tgt = tgt;
+                // click selects
+                path.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    selectArrow(path);
+                });
                 svg.appendChild(path);
 
                 // arrow head as a small left-pointing triangle at endX,endY
@@ -323,11 +703,17 @@
                 const triD = `M ${endX} ${endY} L ${endX - px} ${endY - py} L ${endX - px} ${endY + py} Z`;
                 tri.setAttribute('d', triD);
                 tri.setAttribute('fill', col);
+                tri.classList.add('clickable', 'connector-tri');
+                tri.dataset.src = name;
+                tri.dataset.tgt = tgt;
+                tri.addEventListener('click', (ev) => { ev.stopPropagation(); selectArrow(path); });
                 svg.appendChild(tri);
             }
         }
 
         timelineEl.style.minWidth = width + 'px';
+        // attach drag handlers so modules can be moved between lanes
+        try { attachDragHandlers(modules); } catch (e) { console.warn('attachDragHandlers failed', e); }
     }
 
     function handleFiles(fileList) {
@@ -353,6 +739,8 @@
         handleFiles(fl).then(filesMap => {
             const res = buildModulesFromFiles(filesMap);
             const modules = res.modules || {};
+            // new load -> clear undo history
+            clearHistory();
             const errors = [];
             // collect parse errors (if any) instead of aborting immediately
             if (res.parseErrors && res.parseErrors.length > 0) {
@@ -464,27 +852,12 @@
                 errors.push(MSG.circularDependency + result.cycles.join(', '));
             }
 
-            // If there are validation errors, show popup AND display them inline below the timeline,
-            // but still attempt to render the timeline so user can inspect diagram state.
-            const errorPanelId = 'errorPanel';
-            const existingErrPanel = document.getElementById(errorPanelId);
-            if (errors.length > 0) {
-                showPopup(MSG.validationErrors, errors.map(e => ('* ' + e)).join('<br>'));
-                log(MSG.validationFailed);
-                let errPanel = existingErrPanel;
-                if (!errPanel) {
-                    errPanel = document.createElement('div');
-                    errPanel.id = errorPanelId;
-                    errPanel.className = 'error-panel';
-                    // append after timeline inside the same wrapper so it appears under the diagram
-                    if (timelineEl && timelineEl.parentNode) timelineEl.parentNode.appendChild(errPanel);
-                    else document.body.appendChild(errPanel);
-                }
-                errPanel.innerHTML = `<div class="error-header"><strong>${MSG.validationErrors}</strong></div><ul>` + errors.map(e => `<li>${e}</li>`).join('') + '</ul>';
-            } else {
-                if (existingErrPanel) existingErrPanel.remove();
-            }
+            // show inline + popup errors (if any)
+            displayValidationErrors(errors);
 
+            // Keep current state so DnD can update threads and re-schedule
+            currentModules = modules;
+            currentScheduled = result.scheduled;
             // Proceed to render even if there were validation issues (some modules may not be scheduled).
             render(modules, result.scheduled);
             log('Auto-rendered ' + Object.keys(modules).length + ' modules' + (errors.length > 0 ? ' (with validation warnings)' : ''));
@@ -693,4 +1066,54 @@
             showPopup(MSG.exportFailed, String(e));
         }
     });
+
+    // Undo button handler
+    const undoBtn = document.getElementById('undoBtn');
+    if (undoBtn) {
+        setUndoButtonState(false);
+        undoBtn.addEventListener('click', () => {
+            const prev = popHistory();
+            if (!prev) { log('Nothing to undo'); return; }
+            // push current state to redo so user can redo the undo
+            try { pushRedo(currentModules || {}); } catch (e) { console.warn(e); }
+            // prev is a snapshot of modules; restore threads and other fields
+            currentModules = prev;
+            const vres = validateModules(currentModules);
+            currentScheduled = vres.scheduled || {};
+            // show only inline errors for undo/redo (no popup)
+            displayValidationErrors(vres.errors || [], { popup: false });
+            render(currentModules, currentScheduled);
+            log('Undo applied');
+        });
+    }
+
+    // Redo button handler
+    const redoBtn = document.getElementById('redoBtn');
+    if (redoBtn) {
+        setRedoButtonState(false);
+        redoBtn.addEventListener('click', () => {
+            const next = popRedo();
+            if (!next) { log('Nothing to redo'); return; }
+            // before re-applying redo snapshot, push current state to history so undo remains possible
+            try { pushHistory(currentModules || {}); } catch (e) { console.warn(e); }
+            currentModules = next;
+            const vres = validateModules(currentModules);
+            currentScheduled = vres.scheduled || {};
+            // show only inline errors for undo/redo (no popup)
+            displayValidationErrors(vres.errors || [], { popup: false });
+            render(currentModules, currentScheduled);
+            log('Redo applied');
+        });
+    }
+
+    // Delete Arrow button handler (UI button)
+    const deleteBtn = document.getElementById('deleteArrowBtn');
+    if (deleteBtn) {
+        deleteBtn.disabled = true;
+        deleteBtn.addEventListener('click', () => {
+            // no extra popup suppression here — reuse deleteSelected with popup
+            deleteSelected(true);
+            log('Deleted selected arrow');
+        });
+    }
 })();
