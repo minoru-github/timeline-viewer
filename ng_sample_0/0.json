@@ -1,0 +1,49 @@
+[
+    {
+        "module": "a",
+        "time": 2,
+        "from": [],
+        "to": [
+            {
+                "thread": "1",
+                "module": "b"
+            },
+            {
+                "thread": "2",
+                "module": "c"
+            },
+            {
+                "thread": "1",
+                "module": "d"
+            }
+        ]
+    },
+    {
+        "module": "e",
+        "time": 2,
+        "from": [
+            {
+                "thread": "1",
+                "module": "d"
+            }
+        ],
+        "to": []
+    },
+    {
+        "module": "f",
+        "time": 5,
+        "from": [],
+        "to": []
+    },
+    {
+        "module": "j",
+        "time": 0,
+        "from": [
+            {
+                "thread": "0",
+                "module": "a"
+            }
+        ],
+        "to": []
+    }
+]

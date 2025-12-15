@@ -41,68 +41,58 @@
     // CSV parsing removed — app now accepts JSON-only inputs.
 
     function buildModulesFromFiles(filesMap) {
+        // New spec: each JSON file's basename is the `thread` name. Each file contains
+        // an array of module objects: { module, time, from:[{thread,module}], to:[{thread,module}] }
         const modules = {};
         const parseErrors = [];
-        for (const name in filesMap) {
-            // strip final extension (csv/json or others)
-            const base = name.replace(/\.[^.]+$/, '');
-            const text = (filesMap[name] || '').trim();
-            let rows = [];
-            let parsedAsJSON = false;
-            if (text.startsWith('{') || text.startsWith('[')) {
-                try {
-                    const parsed = JSON.parse(text);
-                    parsedAsJSON = true;
-                    rows = Array.isArray(parsed) ? parsed : [parsed];
-                } catch (e) {
-                    parseErrors.push(`${name}: ${MSG.invalidJson} (${e.message})`);
-                    continue;
-                }
-            } else {
-                parseErrors.push(`${name}: ${MSG.notJsonFile}`);
+        for (const fname in filesMap) {
+            const baseThread = fname.replace(/\.[^.]+$/, '');
+            const text = (filesMap[fname] || '').trim();
+            if (!text) continue;
+            let parsed;
+            try {
+                parsed = JSON.parse(text);
+            } catch (e) {
+                parseErrors.push(`${fname}: ${MSG.invalidJson} (${e.message})`);
                 continue;
             }
 
-            const m = { name: base, rawRows: rows, thread: null, time: 0, from: [], to: [], timeProvided: false };
-
-            if (parsedAsJSON && rows.length === 1) {
-                // JSON single-object spec: use fields directly
-                const r = rows[0];
-                if (r.thread != null && String(r.thread) !== '') m.thread = String(r.thread);
+            // handle array-of-modules format
+            const rows = Array.isArray(parsed) ? parsed : [parsed];
+            for (const r of rows) {
+                if (!r || !r.module) continue;
+                const short = String(r.module);
+                const id = `${baseThread}:${short}`;
+                const m = { name: id, shortName: short, thread: String(baseThread), time: 0, from: [], to: [], timeProvided: false };
                 if (r.time != null && r.time !== '') {
                     m.timeProvided = true;
                     const n = Number(r.time);
                     if (Number.isFinite(n)) m.time = n;
                 }
-                if (Array.isArray(r.from)) m.from = r.from.filter(x => x && String(x).toLowerCase() !== 'none');
-                else if (r.from && String(r.from).toLowerCase() !== 'none') m.from.push(String(r.from));
-                if (Array.isArray(r.to)) m.to = r.to.filter(x => x && String(x).toLowerCase() !== 'none');
-                else if (r.to && String(r.to).toLowerCase() !== 'none') m.to.push(String(r.to));
-            } else {
-                // CSV-style rows or JSON array-of-rows: accumulate fields
-                for (const r of rows) {
-                    if (!r) continue;
-                    if (r.thread && r.thread !== '') m.thread = r.thread;
-                    if (r.time && r.time !== '') {
-                        m.timeProvided = true;
-                        const n = Number(r.time);
-                        if (Number.isFinite(n)) m.time = n;
+                // from/to entries expected to be arrays of {thread,module}
+                if (Array.isArray(r.from)) {
+                    for (const f of r.from) {
+                        if (!f || !f.module) continue;
+                        const ft = String(f.thread || baseThread);
+                        const fm = String(f.module);
+                        if (ft.toLowerCase() === 'none' || fm.toLowerCase() === 'none') continue;
+                        m.from.push(`${ft}:${fm}`);
                     }
-                    // handle from/to possibly being arrays (from JSON arrays inside CSV-array case)
-                    if (Array.isArray(r.from)) {
-                        for (const f of r.from) if (f && String(f).toLowerCase() !== 'none') m.from.push(String(f));
-                    } else if (r.from && r.from !== '' && String(r.from).toLowerCase() !== 'none') m.from.push(r.from);
-                    if (Array.isArray(r.to)) {
-                        for (const t of r.to) if (t && String(t).toLowerCase() !== 'none') m.to.push(String(t));
-                    } else if (r.to && r.to !== '' && String(r.to).toLowerCase() !== 'none') m.to.push(r.to);
                 }
+                if (Array.isArray(r.to)) {
+                    for (const t of r.to) {
+                        if (!t || !t.module) continue;
+                        const tt = String(t.thread || baseThread);
+                        const tm = String(t.module);
+                        if (tt.toLowerCase() === 'none' || tm.toLowerCase() === 'none') continue;
+                        m.to.push(`${tt}:${tm}`);
+                    }
+                }
+                // dedupe
+                m.from = Array.from(new Set(m.from));
+                m.to = Array.from(new Set(m.to));
+                modules[id] = m;
             }
-
-            // normalize lists
-            m.from = Array.from(new Set(m.from));
-            m.to = Array.from(new Set(m.to));
-            if (m.thread === null || m.thread === '') m.thread = '0';
-            modules[base] = m;
         }
         return { modules, parseErrors };
     }
@@ -205,8 +195,9 @@
             box.style.width = Math.max(40, Math.round(s.dur * scale)) + 'px';
             box.style.top = '50%';
             box.style.transform = 'translateY(-50%)';
-            // normal module rendering (no border/name color highlight)
-            box.innerHTML = `<div class="name">${name}</div><div class="meta">${s.start} → ${s.finish} ms</div>`;
+            // display the short module name (module id is thread:module)
+            const label = m && m.shortName ? m.shortName : name;
+            box.innerHTML = `<div class="name">${label}</div><div class="meta">${s.start} → ${s.finish} ms</div>`;
             // apply a left accent color to match outgoing arrows
             const boxColor = colorFor(name);
             box.style.borderLeft = `6px solid ${boxColor}`;

@@ -1,0 +1,41 @@
+[
+    {
+        "module": "m05",
+        "time": 1,
+        "from": [
+            {
+                "thread": "1",
+                "module": "m03"
+            },
+            {
+                "thread": "2",
+                "module": "m11"
+            },
+            {
+                "thread": "4",
+                "module": "m18"
+            }
+        ],
+        "to": [
+            {
+                "thread": "0",
+                "module": "m12"
+            }
+        ]
+    },
+    {
+        "module": "m18",
+        "time": 2,
+        "from": [],
+        "to": [
+            {
+                "thread": "4",
+                "module": "m05"
+            },
+            {
+                "thread": "3",
+                "module": "m19"
+            }
+        ]
+    }
+]

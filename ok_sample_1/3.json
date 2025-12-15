@@ -1,0 +1,64 @@
+[
+    {
+        "module": "m16",
+        "time": 1,
+        "from": [],
+        "to": [
+            {
+                "thread": "3",
+                "module": "m17"
+            }
+        ]
+    },
+    {
+        "module": "m17",
+        "time": 6,
+        "from": [
+            {
+                "thread": "3",
+                "module": "m16"
+            }
+        ],
+        "to": [
+            {
+                "thread": "3",
+                "module": "m19"
+            }
+        ]
+    },
+    {
+        "module": "m19",
+        "time": 1,
+        "from": [
+            {
+                "thread": "3",
+                "module": "m17"
+            },
+            {
+                "thread": "4",
+                "module": "m18"
+            },
+            {
+                "thread": "1",
+                "module": "m10"
+            }
+        ],
+        "to": [
+            {
+                "thread": "3",
+                "module": "m20"
+            }
+        ]
+    },
+    {
+        "module": "m20",
+        "time": 3,
+        "from": [
+            {
+                "thread": "3",
+                "module": "m19"
+            }
+        ],
+        "to": []
+    }
+]

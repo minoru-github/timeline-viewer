@@ -1,0 +1,93 @@
+[
+    {
+        "module": "m01",
+        "time": 2,
+        "from": [],
+        "to": [
+            {
+                "thread": "0",
+                "module": "m02"
+            },
+            {
+                "thread": "1",
+                "module": "m03"
+            }
+        ]
+    },
+    {
+        "module": "m02",
+        "time": 2,
+        "from": [
+            {
+                "thread": "0",
+                "module": "m01"
+            }
+        ],
+        "to": [
+            {
+                "thread": "0",
+                "module": "m04"
+            }
+        ]
+    },
+    {
+        "module": "m04",
+        "time": 1,
+        "from": [
+            {
+                "thread": "0",
+                "module": "m02"
+            }
+        ],
+        "to": [
+            {
+                "thread": "0",
+                "module": "m06"
+            }
+        ]
+    },
+    {
+        "module": "m06",
+        "time": 2,
+        "from": [
+            {
+                "thread": "0",
+                "module": "m04"
+            }
+        ],
+        "to": [
+            {
+                "thread": "1",
+                "module": "m08"
+            },
+            {
+                "thread": "0",
+                "module": "m12"
+            }
+        ]
+    },
+    {
+        "module": "m12",
+        "time": 2,
+        "from": [
+            {
+                "thread": "4",
+                "module": "m05"
+            },
+            {
+                "thread": "2",
+                "module": "m11"
+            },
+            {
+                "thread": "0",
+                "module": "m06"
+            }
+        ],
+        "to": [
+            {
+                "thread": "2",
+                "module": "m14"
+            }
+        ]
+    }
+]

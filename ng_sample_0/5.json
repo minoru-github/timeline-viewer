@@ -1,0 +1,34 @@
+[
+    {
+        "module": "h",
+        "time": 5,
+        "from": [
+            {
+                "thread": "4",
+                "module": "g"
+            }
+        ],
+        "to": [
+            {
+                "thread": "5",
+                "module": "i"
+            }
+        ]
+    },
+    {
+        "module": "i",
+        "time": 5,
+        "from": [
+            {
+                "thread": "5",
+                "module": "h"
+            }
+        ],
+        "to": [
+            {
+                "thread": "4",
+                "module": "g"
+            }
+        ]
+    }
+]

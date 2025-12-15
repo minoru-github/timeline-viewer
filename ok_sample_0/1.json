@@ -1,0 +1,38 @@
+[
+    {
+        "module": "b",
+        "time": 2,
+        "from": [
+            {
+                "thread": "none",
+                "module": "none"
+            }
+        ],
+        "to": [
+            {
+                "thread": "1",
+                "module": "c"
+            }
+        ]
+    },
+    {
+        "module": "c",
+        "time": 3,
+        "from": [
+            {
+                "thread": "0",
+                "module": "a"
+            },
+            {
+                "thread": "1",
+                "module": "b"
+            }
+        ],
+        "to": [
+            {
+                "thread": "none",
+                "module": "none"
+            }
+        ]
+    }
+]
