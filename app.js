@@ -326,6 +326,8 @@
         moduleEls.forEach(el => {
             el.setAttribute('draggable', 'true');
             el.addEventListener('dragstart', (ev) => {
+                // If Control is held, disable dragging (Ctrl used for ctrl-click selection)
+                if (ev.ctrlKey) { ev.preventDefault(); return; }
                 const name = el.dataset.name;
                 try { ev.dataTransfer.setData('text/plain', name); ev.dataTransfer.effectAllowed = 'move'; } catch (e) { }
                 el.classList.add('dragging');
@@ -733,6 +735,18 @@
                 const dx = Math.abs(endX - startX);
                 const mx = Math.max(60, dx * 0.55);
                 const d = `M ${startX} ${startY} C ${startX + mx} ${startY} ${endX - mx} ${endY} ${endX} ${endY}`;
+                // hit area (invisible, wide) for easier selection
+                const hit = document.createElementNS(svgNS, 'path');
+                hit.setAttribute('d', d);
+                hit.setAttribute('stroke', 'transparent');
+                hit.setAttribute('fill', 'none');
+                hit.setAttribute('stroke-width', '14');
+                hit.classList.add('connector-hit');
+                hit.dataset.src = name;
+                hit.dataset.tgt = tgt;
+                hit.addEventListener('click', (ev) => { ev.stopPropagation(); selectArrow(path); });
+                svg.appendChild(hit);
+
                 const path = document.createElementNS(svgNS, 'path');
                 path.setAttribute('d', d);
                 const col = colorFor(name);
@@ -756,6 +770,16 @@
                 const px = 8; // triangle length
                 const py = 5; // half height
                 const triD = `M ${endX} ${endY} L ${endX - px} ${endY - py} L ${endX - px} ${endY + py} Z`;
+                // hit triangle (invisible, slightly larger) to ease selection of arrowhead
+                const triHit = document.createElementNS(svgNS, 'path');
+                triHit.setAttribute('d', triD);
+                triHit.setAttribute('fill', 'transparent');
+                triHit.classList.add('connector-tri-hit');
+                triHit.dataset.src = name;
+                triHit.dataset.tgt = tgt;
+                triHit.addEventListener('click', (ev) => { ev.stopPropagation(); selectArrow(path); });
+                svg.appendChild(triHit);
+
                 tri.setAttribute('d', triD);
                 tri.setAttribute('fill', col);
                 tri.classList.add('clickable', 'connector-tri');
@@ -1169,6 +1193,55 @@
             // no extra popup suppression here — reuse deleteSelected with popup
             deleteSelected(true);
             log('Deleted selected arrow');
+        });
+    }
+
+    // Export snapshot as JSON for external save into workspace/output
+    const exportJsonBtn = document.getElementById('exportJsonBtn');
+    if (exportJsonBtn) {
+        exportJsonBtn.addEventListener('click', () => {
+            try {
+                const snap = JSON.parse(JSON.stringify(currentModules || {}));
+                // group by thread and build arrays in input-spec format
+                const byThread = {};
+                for (const id of Object.keys(snap)) {
+                    const m = snap[id];
+                    const thread = String(m.thread || (id.includes(':') ? id.split(':')[0] : '0'));
+                    const short = m.shortName || (id.includes(':') ? id.split(':')[1] : id);
+                    const entry = { module: short };
+                    if (m.time != null) entry.time = m.time;
+                    if (Array.isArray(m.from) && m.from.length) entry.from = m.from.map(x => {
+                        const parts = String(x).split(':');
+                        return { thread: parts[0] || thread, module: parts[1] || parts[0] };
+                    });
+                    if (Array.isArray(m.to) && m.to.length) entry.to = m.to.map(x => {
+                        const parts = String(x).split(':');
+                        return { thread: parts[0] || thread, module: parts[1] || parts[0] };
+                    });
+                    (byThread[thread] = byThread[thread] || []).push(entry);
+                }
+
+                // trigger downloads for each thread file
+                const threads = Object.keys(byThread).sort();
+                if (threads.length === 0) { showPopup('Export', 'No modules to export'); return; }
+                for (const t of threads) {
+                    const content = JSON.stringify(byThread[t], null, 2);
+                    const blob = new Blob([content], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${t}.json`;
+                    document.body.appendChild(a);
+                    // small timeout to allow multiple downloads to register
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 2000);
+                }
+                log('Exported ' + threads.length + ' JSON files (one per thread)');
+            } catch (e) {
+                console.error('Export per-thread JSON failed', e);
+                showPopup('Export failed', String(e));
+            }
         });
     }
 })();

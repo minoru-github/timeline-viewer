@@ -225,3 +225,21 @@ header {
 .error-panel li {
     margin: 4px 0
 }
+
+/* invisible wider hit targets to make selecting connectors easier */
+.connector-hit {
+    pointer-events: auto;
+    stroke: transparent;
+    stroke-width: 14;
+    cursor: pointer;
+}
+
+.connector-tri-hit {
+    pointer-events: auto;
+    fill: transparent;
+    cursor: pointer;
+}
+
+.connector-path:hover {
+    stroke-width: 3;
+}
