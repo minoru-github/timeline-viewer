@@ -98,6 +98,36 @@
         document.body.appendChild(overlay);
     }
 
+    // Clear internal UI/state before selecting new files
+    if (filesEl) {
+        filesEl.addEventListener('click', () => {
+            try {
+                // clear in-memory structures
+                currentModules = {};
+                currentScheduled = {};
+                // clear history/redo stacks
+                clearHistory();
+                clearRedo();
+                // clear selection state
+                if (typeof selectedConnector !== 'undefined' && selectedConnector) {
+                    try { selectedConnector.classList.remove('selected'); } catch (e) { }
+                    selectedConnector = null;
+                }
+                clearCtrlSource();
+                // clear UI panels and timeline
+                displayValidationErrors([]);
+                if (timelineEl) timelineEl.innerHTML = '';
+                if (svg) svg.innerHTML = '';
+                const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = true;
+                setUndoButtonState(false);
+                setRedoButtonState(false);
+                // Reset the file input value so selecting the same file again will fire `change`
+                try { filesEl.value = ''; } catch (e) { }
+                log('Cleared current state for new file selection');
+            } catch (e) { console.warn('Failed to clear state on file select', e); }
+        });
+    }
+
     // show or remove inline error panel and popup for given errors array
     function displayValidationErrors(errors, opts) {
         opts = opts || {};
@@ -458,6 +488,30 @@
                     const o = rightNeighbor.el.dataset.name;
                     modules[o].from = Array.from(new Set(modules[o].from || []));
                     modules[name].to = Array.from(new Set(modules[name].to || []));
+                }
+
+                // If the moved module was inserted between a left and right neighbor,
+                // remove any direct dependency links between left and right (a <-> c),
+                // and ensure links are a -> moved and moved -> c.
+                if (leftNeighbor && rightNeighbor) {
+                    const aName = leftNeighbor.el.dataset.name;
+                    const cName = rightNeighbor.el.dataset.name;
+                    try {
+                        // remove any references between a and c in both to/from arrays
+                        if (modules[aName]) {
+                            modules[aName].to = (modules[aName].to || []).filter(x => x !== cName);
+                            modules[aName].from = (modules[aName].from || []).filter(x => x !== cName);
+                        }
+                        if (modules[cName]) {
+                            modules[cName].to = (modules[cName].to || []).filter(x => x !== aName);
+                            modules[cName].from = (modules[cName].from || []).filter(x => x !== aName);
+                        }
+                        // also ensure the moved module is present in the correct arrays (defensive)
+                        modules[name].from = Array.from(new Set(modules[name].from || []));
+                        modules[name].to = Array.from(new Set(modules[name].to || []));
+                    } catch (e) {
+                        console.warn('Failed to adjust neighbor relations after insert', e);
+                    }
                 }
 
                 const res = schedule(modules);
