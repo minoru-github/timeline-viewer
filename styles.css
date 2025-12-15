@@ -111,6 +111,12 @@ header {
     box-shadow: 0 4px 10px rgba(30, 40, 80, 0.08);
 }
 
+/* visual for ctrl-selected source module */
+.module.ctrl-source {
+    outline: 3px dashed rgba(43, 109, 246, 0.5);
+    outline-offset: 2px;
+}
+
 .connector {
     position: absolute;
     left: 0;

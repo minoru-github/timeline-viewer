@@ -469,6 +469,32 @@
         const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = false;
     }
 
+    // Ctrl-click dependency builder state
+    let ctrlSourceName = null;
+    function setCtrlSource(name) {
+        // clear previous visual
+        if (ctrlSourceName) {
+            const prev = timelineEl.querySelector(`.module[data-name="${ctrlSourceName}"]`);
+            if (prev) prev.classList.remove('ctrl-source');
+        }
+        ctrlSourceName = name;
+        if (ctrlSourceName) {
+            const el = timelineEl.querySelector(`.module[data-name="${ctrlSourceName}"]`);
+            if (el) el.classList.add('ctrl-source');
+        }
+    }
+    function clearCtrlSource() {
+        if (!ctrlSourceName) return;
+        const el = timelineEl.querySelector(`.module[data-name="${ctrlSourceName}"]`);
+        if (el) el.classList.remove('ctrl-source');
+        ctrlSourceName = null;
+    }
+
+    // clear ctrl source when Control is released
+    document.addEventListener('keyup', (ev) => {
+        if (ev.key === 'Control') clearCtrlSource();
+    });
+
     // click elsewhere clears selection
     document.addEventListener('click', (ev) => {
         if (!selectedConnector) return;
@@ -571,6 +597,35 @@
             // apply a left accent color to match outgoing arrows
             const boxColor = colorFor(name);
             box.style.borderLeft = `6px solid ${boxColor}`;
+            // click handler: support ctrl-click dependency creation (ctrl: select source -> click target)
+            box.addEventListener('click', (ev) => {
+                // only operate while Ctrl is held
+                if (!ev.ctrlKey) { clearCtrlSource(); return; }
+                // if no source selected yet, set this as source
+                if (!ctrlSourceName) { setCtrlSource(name); log(`Ctrl-source: ${name}`); return; }
+                // if source is same as clicked, ignore
+                if (ctrlSourceName === name) return;
+                // create dependency ctrlSourceName -> name
+                try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
+                // ensure modules exist in currentModules
+                currentModules[ctrlSourceName] = currentModules[ctrlSourceName] || (modules[ctrlSourceName] ? JSON.parse(JSON.stringify(modules[ctrlSourceName])) : { name: ctrlSourceName, thread: null, from: [], to: [], time: 0 });
+                currentModules[name] = currentModules[name] || (modules[name] ? JSON.parse(JSON.stringify(modules[name])) : { name: name, thread: null, from: [], to: [], time: 0 });
+                if (!currentModules[ctrlSourceName].to) currentModules[ctrlSourceName].to = [];
+                if (!currentModules[name].from) currentModules[name].from = [];
+                if (!currentModules[ctrlSourceName].to.includes(name)) currentModules[ctrlSourceName].to.push(name);
+                if (!currentModules[name].from.includes(ctrlSourceName)) currentModules[name].from.push(ctrlSourceName);
+                // dedupe
+                currentModules[ctrlSourceName].to = Array.from(new Set(currentModules[ctrlSourceName].to));
+                currentModules[name].from = Array.from(new Set(currentModules[name].from));
+                // clear ctrl visual
+                clearCtrlSource();
+                // validate, reschedule and render
+                const vres = validateModules(currentModules);
+                currentScheduled = vres.scheduled || {};
+                displayValidationErrors(vres.errors || []);
+                try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }]); }
+                log(`Added dependency ${ctrlSourceName} → ${name}`);
+            });
             lane.el = lane.el || lane;
             lane.el.appendChild(box);
         }
