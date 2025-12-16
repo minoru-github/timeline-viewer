@@ -844,6 +844,21 @@
         deleteSelected(true);
     });
 
+    // Close modal or popup with Escape
+    document.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Escape' && ev.key !== 'Esc') return;
+        try {
+            // close Add Module modal if open
+            if (addModuleModal && addModuleModal.classList && addModuleModal.classList.contains('open')) {
+                closeAddModule();
+            }
+        } catch (e) { /* ignore */ }
+        try {
+            const popup = document.getElementById('seq-popup');
+            if (popup) popup.remove();
+        } catch (e) { /* ignore */ }
+    });
+
     // shared deletion routine used by Delete key and Delete Arrow button
     function deleteSelected(showPopup) {
         if (!selectedConnector) return;
@@ -960,17 +975,14 @@
                     log(`Added dependency ${ctrlSourceName} → ${name}`);
                     return;
                 }
+                // Shift+click: open editor
+                if (ev.shiftKey) { ev.preventDefault(); openModuleEditor(name); return; }
                 // Normal click: focus this module and dim unrelated items
                 ev.stopPropagation();
                 // clear any ctrl-source visual state
                 clearCtrlSource();
                 if (selectedModule === name) { clearModuleSelection(); return; }
                 setModuleSelection(name);
-            });
-            // double-click to edit module
-            box.addEventListener('dblclick', (ev) => {
-                ev.preventDefault();
-                openModuleEditor(name);
             });
             lane.el = lane.el || lane;
             lane.el.appendChild(box);
