@@ -752,6 +752,8 @@
             const allConns = svg.querySelectorAll('path, .connector-tri, .connector-hit, .connector-tri-hit');
             allConns.forEach(c => { c.classList.remove('dimmed', 'connector-highlight'); });
         } catch (e) { console.warn('clearModuleSelection failed', e); }
+        // disable delete module button
+        try { const delModBtn = document.getElementById('deleteModuleBtn'); if (delModBtn) delModBtn.disabled = true; } catch (e) { }
     }
     function setModuleSelection(name) {
         clearModuleSelection();
@@ -776,6 +778,8 @@
                 }
             }
         } catch (e) { console.warn('setModuleSelection failed', e); }
+        // enable delete module button
+        try { const delModBtn = document.getElementById('deleteModuleBtn'); if (delModBtn) delModBtn.disabled = false; } catch (e) { }
     }
     function selectArrow(el) {
         if (selectedConnector && selectedConnector !== el) {
@@ -840,8 +844,10 @@
 
     document.addEventListener('keydown', (ev) => {
         if (ev.key !== 'Delete' && ev.key !== 'Del') return;
-        if (!selectedConnector) return;
-        deleteSelected(true);
+        // priority: delete selected connector, else selected module
+        if (selectedConnector) { deleteSelected(true); return; }
+        if (selectedModule) { deleteSelectedModule(true); return; }
+        return;
     });
 
     // Close modal or popup with Escape
@@ -877,6 +883,75 @@
         currentScheduled = vres.scheduled || {};
         displayValidationErrors(vres.errors || [], { popup: Boolean(showPopup) });
         try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }], { popup: Boolean(showPopup) }); }
+    }
+
+    // wire delete module button
+    const deleteModuleBtn = document.getElementById('deleteModuleBtn');
+    if (deleteModuleBtn) {
+        deleteModuleBtn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            if (!selectedModule) { showPopup('Info', 'No module selected'); return; }
+            deleteSelectedModule(true);
+        });
+    }
+
+    // Delete selected module (button or Delete key)
+    function deleteSelectedModule(showPopup) {
+        if (!selectedModule) return;
+        const name = selectedModule;
+        try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
+        // remove module from map
+        try {
+            // remove references from other modules
+            for (const k of Object.keys(currentModules)) {
+                if (!currentModules[k]) continue;
+                currentModules[k].from = (currentModules[k].from || []).filter(x => x !== name);
+                currentModules[k].to = (currentModules[k].to || []).filter(x => x !== name);
+            }
+            // delete the module itself
+            // capture thread/start for neighbor linking before removing scheduled entry
+            const deletedScheduled = (currentScheduled && currentScheduled[name]) ? currentScheduled[name] : null;
+            delete currentModules[name];
+            // If there are modules on the same thread before/after the deleted one, connect them
+            try {
+                if (deletedScheduled && deletedScheduled.thread) {
+                    const thread = deletedScheduled.thread;
+                    // collect other scheduled modules on the same thread
+                    const others = Object.keys(currentScheduled || {}).filter(k => k !== name && currentScheduled[k] && currentScheduled[k].thread === thread);
+                    const startMap = {};
+                    for (const o of others) startMap[o] = currentScheduled[o].start || 0;
+                    const keys = Object.keys(startMap);
+                    if (keys.length > 0) {
+                        // find left = max start < deleted.start, right = min start > deleted.start
+                        const s = deletedScheduled.start || 0;
+                        let left = null, right = null;
+                        let leftStart = -Infinity, rightStart = Infinity;
+                        for (const k of keys) {
+                            const st = startMap[k];
+                            if (st < s && st > leftStart) { leftStart = st; left = k; }
+                            if (st > s && st < rightStart) { rightStart = st; right = k; }
+                        }
+                        if (left && right) {
+                            // ensure modules exist in currentModules (they should)
+                            if (currentModules[left] && currentModules[right]) {
+                                currentModules[left].to = Array.from(new Set((currentModules[left].to || []).concat([right])));
+                                currentModules[right].from = Array.from(new Set((currentModules[right].from || []).concat([left])));
+                            }
+                        }
+                    }
+                }
+            } catch (e) { console.warn('Failed to connect neighbors after delete', e); }
+        } catch (e) { console.warn('Failed to delete module', e); }
+        // clear selection state
+        clearModuleSelection();
+        // if editing this module, close modal
+        try { if (editingModuleId === name) closeAddModule(); } catch (e) { }
+        // validate, schedule and render
+        const vres = validateModules(currentModules);
+        currentScheduled = vres.scheduled || {};
+        displayValidationErrors(vres.errors || [], { popup: Boolean(showPopup) });
+        try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }], { popup: Boolean(showPopup) }); }
+        log('Deleted module ' + name);
     }
 
     function render(modules, scheduled) {
