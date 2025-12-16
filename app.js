@@ -549,8 +549,8 @@
         moduleEls.forEach(el => {
             el.setAttribute('draggable', 'true');
             el.addEventListener('dragstart', (ev) => {
-                // If Control is held, disable dragging (Ctrl used for ctrl-click selection)
-                if (ev.ctrlKey) { ev.preventDefault(); return; }
+                // If Shift is held, disable dragging (Shift used for shift-click dependency creation)
+                if (ev.shiftKey) { ev.preventDefault(); return; }
                 const name = el.dataset.name;
                 try { ev.dataTransfer.setData('text/plain', name); ev.dataTransfer.effectAllowed = 'move'; } catch (e) { }
                 el.classList.add('dragging');
@@ -798,7 +798,7 @@
         const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = false;
     }
 
-    // Ctrl-click dependency builder state
+    // Shift-click dependency builder state
     let ctrlSourceName = null;
     function setCtrlSource(name) {
         // clear previous visual
@@ -819,9 +819,9 @@
         ctrlSourceName = null;
     }
 
-    // clear ctrl source when Control is released
+    // clear ctrl source when Shift is released
     document.addEventListener('keyup', (ev) => {
-        if (ev.key === 'Control') clearCtrlSource();
+        if (ev.key === 'Shift') clearCtrlSource();
     });
 
     // click elsewhere clears connector selection and module selection
@@ -1020,12 +1020,12 @@
             // apply a left accent color to match outgoing arrows
             const boxColor = colorFor(name);
             box.style.borderLeft = `6px solid ${boxColor}`;
-            // click handler: support ctrl-click dependency creation (ctrl: select source -> click target)
+            // click handler: support Shift-click dependency creation (Shift: select source -> click target)
             box.addEventListener('click', (ev) => {
-                // Ctrl-click: dependency creation flow
-                if (ev.ctrlKey) {
+                // Shift-click: dependency creation flow
+                if (ev.shiftKey) {
                     // if no source selected yet, set this as source
-                    if (!ctrlSourceName) { setCtrlSource(name); log(`Ctrl-source: ${name}`); return; }
+                    if (!ctrlSourceName) { setCtrlSource(name); log(`Shift-source: ${name}`); return; }
                     // if source is same as clicked, ignore
                     if (ctrlSourceName === name) return;
                     // create dependency ctrlSourceName -> name
@@ -1050,8 +1050,8 @@
                     log(`Added dependency ${ctrlSourceName} → ${name}`);
                     return;
                 }
-                // Shift+click: open editor
-                if (ev.shiftKey) { ev.preventDefault(); openModuleEditor(name); return; }
+                // Ctrl+click: open editor
+                if (ev.ctrlKey) { ev.preventDefault(); openModuleEditor(name); return; }
                 // Normal click: focus this module and dim unrelated items
                 ev.stopPropagation();
                 // clear any ctrl-source visual state

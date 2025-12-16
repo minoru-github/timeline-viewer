@@ -12,19 +12,22 @@
     <!-- header removed per user request -->
 
     <section class="controls">
-        <label class="filelabel">JSON files: <input id="files" type="file" accept=".json" multiple></label>
-        <button id="exportSvgBtn">Export SVG</button>
-        <button id="exportJsonBtn" title="Export current state as JSON files">Export Json</button>
-        <button id="addModuleBtn" title="Add a new module">Add Module</button>
-        <button id="deleteModuleBtn" title="Delete selected module" disabled>Delete Module</button>
-        <button id="deleteArrowBtn" title="Delete selected arrow" disabled>Delete Arrow</button>
-        <button id="undoBtn" title="Undo last thread move">Undo</button>
-        <button id="redoBtn" title="Redo last undone move">Redo</button>
-        <div id="totalTime" class="total-time">終了時刻: 0 ms</div>
-        <div id="log" class="log"></div>
+        <div class="controls-top">
+            <label class="filelabel">JSON files: <input id="files" type="file" accept=".json" multiple></label>
+            <button id="exportSvgBtn">Export SVG</button>
+            <button id="exportJsonBtn" title="Export current state as JSON files">Export Json</button>
+            <button id="addModuleBtn" title="Add a new module">Add Module</button>
+            <button id="deleteModuleBtn" title="Delete selected module" disabled>Delete Module</button>
+            <button id="deleteArrowBtn" title="Delete selected arrow" disabled>Delete Arrow</button>
+            <button id="undoBtn" title="Undo last thread move">Undo</button>
+            <button id="redoBtn" title="Redo last undone move">Redo</button>
+            <div id="totalTime" class="total-time">終了時刻: 0 ms</div>
+            <div id="log" class="log"></div>
+        </div>
         <div id="quickHelp" class="quick-help">
-            <span>矢印追加: Ctrlを押した状態で、送信元を左クリックし送信先を左クリック</span>
-            <span>設定変更: Shift + 左クリック</span>
+            <span>矢印追加: Shiftを押した状態で、送信元を左クリックし送信先を左クリック</span>
+            <span>設定変更: Ctrl + 左クリック</span>
+            <span>削除：左クリックで選択してdeleteキー</span>
         </div>
     </section>
 
