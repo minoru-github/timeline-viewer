@@ -12,7 +12,7 @@
     <!-- header removed per user request -->
 
     <section class="controls">
-        <label class="filelabel">JSON files (multiple): <input id="files" type="file" accept=".json" multiple></label>
+        <label class="filelabel">JSON files: <input id="files" type="file" accept=".json" multiple></label>
         <button id="exportSvgBtn">Export SVG</button>
         <button id="exportJsonBtn" title="Export current state as JSON files">Export Json</button>
         <button id="addModuleBtn" title="Add a new module">Add Module</button>
@@ -21,6 +21,10 @@
         <button id="redoBtn" title="Redo last undone move">Redo</button>
         <div id="totalTime" class="total-time">終了時刻: 0 ms</div>
         <div id="log" class="log"></div>
+        <div id="quickHelp" class="quick-help">
+            <span>矢印追加: Ctrlを押した状態で、送信元を左クリックし送信先を左クリック</span>
+            <span>設定変更: Shift + 左クリック</span>
+        </div>
     </section>
 
     <main>
