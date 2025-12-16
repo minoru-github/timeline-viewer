@@ -38,6 +38,13 @@ header {
     font-size: 13px
 }
 
+.total-time {
+    margin-left: 8px;
+    font-weight: 700;
+    color: #333;
+    font-size: 13px;
+}
+
 #timelineWrap {
     position: relative;
     margin: 18px;

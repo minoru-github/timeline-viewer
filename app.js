@@ -1086,6 +1086,16 @@
         timelineEl.style.minWidth = width + 'px';
         // attach drag handlers so modules can be moved between lanes
         try { attachDragHandlers(modules); } catch (e) { console.warn('attachDragHandlers failed', e); }
+
+        // Update total/end time display (the finish time of the last-executed module)
+        try {
+            const totalEl = document.getElementById('totalTime');
+            if (totalEl) {
+                const finishes = Object.values(scheduled || {}).map(s => (s && s.finish) ? Number(s.finish) : 0);
+                const endTime = finishes.length ? Math.max(...finishes) : 0;
+                totalEl.textContent = `終了時刻: ${Math.round(endTime)} ms`;
+            }
+        } catch (e) { console.warn('Failed to update totalTime', e); }
     }
 
     function handleFiles(fileList) {
