@@ -15,6 +15,7 @@
         <label class="filelabel">JSON files (multiple): <input id="files" type="file" accept=".json" multiple></label>
         <button id="exportSvgBtn">Export SVG</button>
         <button id="exportJsonBtn" title="Export current state as JSON files">Export Json</button>
+        <button id="addModuleBtn" title="Add a new module">Add Module</button>
         <button id="deleteArrowBtn" title="Delete selected arrow" disabled>Delete Arrow</button>
         <button id="undoBtn" title="Undo last thread move">Undo</button>
         <button id="redoBtn" title="Redo last undone move">Redo</button>
@@ -27,6 +28,37 @@
             <div id="timeline" class="timeline"></div>
         </div>
     </main>
+
+    <!-- Add Module Modal -->
+    <div id="addModuleModal" class="modal-overlay" aria-hidden="true">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="addModuleTitle">
+            <h3 id="addModuleTitle">Add Module</h3>
+            <div class="row">
+                <label>Thread (name)</label>
+                <input id="am-thread" type="text" placeholder="e.g. 0" />
+            </div>
+            <div class="row">
+                <label>Module name</label>
+                <input id="am-name" type="text" placeholder="e.g. ServiceA" />
+            </div>
+            <div class="row">
+                <label>Time (ms, optional)</label>
+                <input id="am-time" type="number" min="0" placeholder="e.g. 120" />
+            </div>
+            <div class="row">
+                <label>From (hold Ctrl to multi-select)</label>
+                <select id="am-from" multiple size="6"></select>
+            </div>
+            <div class="row">
+                <label>To (hold Ctrl to multi-select)</label>
+                <select id="am-to" multiple size="6"></select>
+            </div>
+            <div class="actions">
+                <button id="am-cancel" class="btn ghost">Cancel</button>
+                <button id="am-create" class="btn primary">Create</button>
+            </div>
+        </div>
+    </div>
 
     <script src="app.js"></script>
 </body>

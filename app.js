@@ -128,6 +128,199 @@
         });
     }
 
+    // --- Add Module UI handlers ---
+    const addModuleBtn = document.getElementById('addModuleBtn');
+    const addModuleModal = document.getElementById('addModuleModal');
+    const amThread = document.getElementById('am-thread');
+    const amName = document.getElementById('am-name');
+    const amTime = document.getElementById('am-time');
+    const amFrom = document.getElementById('am-from');
+    const amTo = document.getElementById('am-to');
+    const amCancel = document.getElementById('am-cancel');
+    const amCreate = document.getElementById('am-create');
+    let editingModuleId = null;
+
+    function openAddModule() {
+        // populate thread and selections from currentModules
+        const threads = Array.from(new Set(Object.values(currentModules).map(m => String(m.thread || (m.name && m.name.split(':')[0]) || '0')))).sort();
+        amThread.value = threads.length ? threads[0] : '0';
+        // populate module lists
+        populateAddModuleLists();
+        if (addModuleModal) addModuleModal.classList.add('open');
+        if (amName) amName.focus();
+    }
+
+    function openModuleEditor(moduleId) {
+        if (!moduleId || !currentModules[moduleId]) { openAddModule(); return; }
+        const m = currentModules[moduleId];
+        populateAddModuleLists();
+        editingModuleId = moduleId;
+        // populate fields
+        try {
+            amThread.value = String(m.thread || (m.name && m.name.split(':')[0]) || '0');
+            amName.value = String(m.shortName || (m.name && m.name.split(':')[1]) || '');
+            amTime.value = m.timeProvided ? String(m.time) : '';
+            // select from/to options
+            const fromVals = new Set(m.from || []);
+            const toVals = new Set(m.to || []);
+            for (const opt of (amFrom && amFrom.options) || []) opt.selected = fromVals.has(opt.value);
+            for (const opt of (amTo && amTo.options) || []) opt.selected = toVals.has(opt.value);
+            // change button text to Save
+            if (amCreate) amCreate.textContent = '保存';
+        } catch (e) { console.warn('openModuleEditor failed', e); }
+        if (addModuleModal) addModuleModal.classList.add('open');
+        if (amName) amName.focus();
+    }
+
+    function closeAddModule() {
+        if (addModuleModal) addModuleModal.classList.remove('open');
+        // clear fields
+        try { amName.value = ''; amTime.value = ''; amFrom.innerHTML = ''; amTo.innerHTML = ''; } catch (e) { }
+        // reset edit state
+        editingModuleId = null;
+        if (amCreate) amCreate.textContent = '作成';
+    }
+
+    function populateAddModuleLists() {
+        // options are current module ids with readable labels
+        const keys = Object.keys(currentModules || {}).sort();
+        const makeOpt = (id) => {
+            const m = currentModules[id];
+            const label = m && m.shortName ? `${m.thread}:${m.shortName}` : id;
+            return `<option value="${id}">${label}</option>`;
+        };
+        if (amFrom) amFrom.innerHTML = keys.map(makeOpt).join('');
+        if (amTo) amTo.innerHTML = keys.map(makeOpt).join('');
+    }
+
+    if (addModuleBtn) addModuleBtn.addEventListener('click', (ev) => { ev.preventDefault(); openAddModule(); });
+    if (amCancel) amCancel.addEventListener('click', (ev) => { ev.preventDefault(); closeAddModule(); });
+
+    if (amCreate) amCreate.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const thread = String((amThread && amThread.value) || '0').trim();
+        const short = String((amName && amName.value) || '').trim();
+        const timeVal = (amTime && amTime.value) ? Number(amTime.value) : null;
+        if (!short) { showPopup('Invalid', 'Module name is required'); return; }
+        // collect from/to selections
+        const fromSel = Array.from((amFrom && amFrom.selectedOptions) || []).map(o => o.value);
+        const toSel = Array.from((amTo && amTo.selectedOptions) || []).map(o => o.value);
+
+        // If editing an existing module
+        if (editingModuleId) {
+            const oldId = editingModuleId;
+            if (!currentModules[oldId]) { showPopup('Error', 'Module not found'); editingModuleId = null; if (amCreate) amCreate.textContent = '作成'; return; }
+            // determine new id and ensure uniqueness (allow same id if unchanged)
+            let newId = `${thread}:${short}`;
+            if (newId !== oldId) {
+                let suffix = 1;
+                while (currentModules[newId]) {
+                    newId = `${thread}:${short}_${suffix++}`;
+                }
+            }
+            try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
+            const m = currentModules[oldId];
+            const prevFrom = Array.from(m.from || []);
+            const prevTo = Array.from(m.to || []);
+            // update or rename in map
+            if (newId !== oldId) {
+                currentModules[newId] = m;
+                delete currentModules[oldId];
+            }
+            m.name = newId;
+            m.thread = thread;
+            m.shortName = short;
+            m.timeProvided = false;
+            if (timeVal != null && Number.isFinite(timeVal) && timeVal > 0) { m.time = timeVal; m.timeProvided = true; }
+            // set new from/to (deduped)
+            m.from = Array.from(new Set(fromSel));
+            m.to = Array.from(new Set(toSel));
+
+            // update DOM data-name if renamed
+            try {
+                const domEl = timelineEl.querySelector(`.module[data-name="${oldId}"]`);
+                if (domEl) { domEl.dataset.name = newId; domEl.setAttribute('data-name', newId); }
+            } catch (e) { console.warn('Failed to update DOM data-name on edit', e); }
+
+            // replace oldId references across all modules
+            const allKeys = Object.keys(currentModules);
+            for (const k of allKeys) {
+                const mm = currentModules[k];
+                if (!mm) continue;
+                if (Array.isArray(mm.from) && mm.from.length) mm.from = mm.from.map(x => x === oldId ? newId : x);
+                if (Array.isArray(mm.to) && mm.to.length) mm.to = mm.to.map(x => x === oldId ? newId : x);
+            }
+
+            // adjust reciprocal references: ensure selected from/to point back to this module
+            for (const f of m.from) {
+                if (!currentModules[f]) continue;
+                currentModules[f].to = Array.from(new Set((currentModules[f].to || []).concat([m.name])));
+            }
+            for (const t of m.to) {
+                if (!currentModules[t]) continue;
+                currentModules[t].from = Array.from(new Set((currentModules[t].from || []).concat([m.name])));
+            }
+
+            // remove reciprocals that were present before but not selected now
+            for (const f of prevFrom) {
+                if (!m.from.includes(f) && currentModules[f]) {
+                    currentModules[f].to = (currentModules[f].to || []).filter(x => x !== m.name);
+                }
+            }
+            for (const t of prevTo) {
+                if (!m.to.includes(t) && currentModules[t]) {
+                    currentModules[t].from = (currentModules[t].from || []).filter(x => x !== m.name);
+                }
+            }
+
+            // done editing
+            editingModuleId = null;
+            if (amCreate) amCreate.textContent = '作成';
+            // revalidate and render
+            const vres = validateModules(currentModules);
+            currentScheduled = vres.scheduled || {};
+            displayValidationErrors(vres.errors || []);
+            try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }]); }
+            closeAddModule();
+            log('Edited module ' + m.name);
+            return;
+        }
+
+        // create-new flow (unchanged)
+        let newId = `${thread}:${short}`;
+        let suffix = 1;
+        while (currentModules[newId]) {
+            newId = `${thread}:${short}_${suffix++}`;
+        }
+
+        // create module object
+        const m = { name: newId, shortName: short, thread: thread, time: 0, from: [], to: [], timeProvided: false };
+        if (timeVal != null && Number.isFinite(timeVal) && timeVal > 0) { m.time = timeVal; m.timeProvided = true; }
+        m.from = Array.from(new Set(fromSel));
+        m.to = Array.from(new Set(toSel));
+
+        // push history and add to currentModules
+        try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
+        currentModules[newId] = m;
+
+        // update reciprocal references on existing modules
+        for (const f of m.from) {
+            if (!currentModules[f]) continue;
+            currentModules[f].to = Array.from(new Set((currentModules[f].to || []).concat([newId])));
+        }
+        for (const t of m.to) {
+            if (!currentModules[t]) continue;
+            currentModules[t].from = Array.from(new Set((currentModules[t].from || []).concat([newId])));
+        }
+
+        // revalidate, schedule and render
+        const vres = validateModules(currentModules);
+        currentScheduled = vres.scheduled || {};
+        displayValidationErrors(vres.errors || []);
+        try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }]); }
+        log('Created module ' + newId);
+        closeAddModule();
+    });
     // show or remove inline error panel and popup for given errors array
     function displayValidationErrors(errors, opts) {
         opts = opts || {};
@@ -722,6 +915,11 @@
                 displayValidationErrors(vres.errors || []);
                 try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }]); }
                 log(`Added dependency ${ctrlSourceName} → ${name}`);
+            });
+            // double-click to edit module
+            box.addEventListener('dblclick', (ev) => {
+                ev.preventDefault();
+                openModuleEditor(name);
             });
             lane.el = lane.el || lane;
             lane.el.appendChild(box);
