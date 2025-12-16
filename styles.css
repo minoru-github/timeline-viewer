@@ -38,6 +38,33 @@ header {
     font-size: 13px
 }
 
+.total-time {
+    margin-left: 8px;
+    font-weight: 700;
+    color: #333;
+    font-size: 13px;
+}
+
+.quick-help {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-left: 12px;
+    font-size: 12px;
+    color: #444;
+}
+
+.quick-help span {
+    display: block;
+}
+
+.quick-help em {
+    font-style: normal;
+    font-weight: 700;
+    color: var(--accent);
+    margin-left: 6px;
+}
+
 #timelineWrap {
     position: relative;
     margin: 18px;
@@ -226,6 +253,80 @@ header {
     margin: 4px 0
 }
 
+/* Modal for Add Module */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.36);
+    z-index: 10000;
+}
+
+.modal-overlay.open {
+    display: flex;
+}
+
+.modal {
+    background: #fff;
+    border-radius: 8px;
+    padding: 18px;
+    width: 420px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+}
+
+.modal h3 {
+    margin: 0 0 8px;
+    font-size: 16px
+}
+
+.modal .row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px
+}
+
+.modal label {
+    font-size: 13px;
+    color: #333
+}
+
+.modal input[type=text],
+.modal input[type=number],
+.modal select,
+.modal textarea {
+    padding: 8px 10px;
+    border: 1px solid #e6e9ef;
+    border-radius: 6px;
+    font-size: 13px;
+    width: 100%
+}
+
+.modal .actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 8px
+}
+
+.btn {
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer
+}
+
+.btn.primary {
+    background: var(--accent);
+    color: #fff
+}
+
+.btn.ghost {
+    background: #f2f4fb
+}
+
 /* invisible wider hit targets to make selecting connectors easier */
 .connector-hit {
     pointer-events: auto;
@@ -242,4 +343,33 @@ header {
 
 .connector-path:hover {
     stroke-width: 3;
+}
+
+/* focused / dimming styles when a module is selected */
+.module.dimmed {
+    opacity: 0.22;
+    filter: none;
+}
+
+.module.module-focused {
+    opacity: 1;
+    transform: translateY(-3px);
+    box-shadow: 0 14px 30px rgba(30, 40, 80, 0.14);
+}
+
+.module.module-connected {
+    opacity: 0.95;
+}
+
+.connector-path.dimmed,
+.connector-tri.dimmed,
+.connector-hit.dimmed,
+.connector-tri-hit.dimmed {
+    opacity: 0.08;
+}
+
+.connector-path.connector-highlight,
+.connector-tri.connector-highlight {
+    opacity: 1;
+    stroke-width: 3 !important;
 }

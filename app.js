@@ -128,6 +128,199 @@
         });
     }
 
+    // --- Add Module UI handlers ---
+    const addModuleBtn = document.getElementById('addModuleBtn');
+    const addModuleModal = document.getElementById('addModuleModal');
+    const amThread = document.getElementById('am-thread');
+    const amName = document.getElementById('am-name');
+    const amTime = document.getElementById('am-time');
+    const amFrom = document.getElementById('am-from');
+    const amTo = document.getElementById('am-to');
+    const amCancel = document.getElementById('am-cancel');
+    const amCreate = document.getElementById('am-create');
+    let editingModuleId = null;
+
+    function openAddModule() {
+        // populate thread and selections from currentModules
+        const threads = Array.from(new Set(Object.values(currentModules).map(m => String(m.thread || (m.name && m.name.split(':')[0]) || '0')))).sort();
+        amThread.value = threads.length ? threads[0] : '0';
+        // populate module lists
+        populateAddModuleLists();
+        if (addModuleModal) addModuleModal.classList.add('open');
+        if (amName) amName.focus();
+    }
+
+    function openModuleEditor(moduleId) {
+        if (!moduleId || !currentModules[moduleId]) { openAddModule(); return; }
+        const m = currentModules[moduleId];
+        populateAddModuleLists();
+        editingModuleId = moduleId;
+        // populate fields
+        try {
+            amThread.value = String(m.thread || (m.name && m.name.split(':')[0]) || '0');
+            amName.value = String(m.shortName || (m.name && m.name.split(':')[1]) || '');
+            amTime.value = m.timeProvided ? String(m.time) : '';
+            // select from/to options
+            const fromVals = new Set(m.from || []);
+            const toVals = new Set(m.to || []);
+            for (const opt of (amFrom && amFrom.options) || []) opt.selected = fromVals.has(opt.value);
+            for (const opt of (amTo && amTo.options) || []) opt.selected = toVals.has(opt.value);
+            // change button text to Save
+            if (amCreate) amCreate.textContent = '保存';
+        } catch (e) { console.warn('openModuleEditor failed', e); }
+        if (addModuleModal) addModuleModal.classList.add('open');
+        if (amName) amName.focus();
+    }
+
+    function closeAddModule() {
+        if (addModuleModal) addModuleModal.classList.remove('open');
+        // clear fields
+        try { amName.value = ''; amTime.value = ''; amFrom.innerHTML = ''; amTo.innerHTML = ''; } catch (e) { }
+        // reset edit state
+        editingModuleId = null;
+        if (amCreate) amCreate.textContent = '作成';
+    }
+
+    function populateAddModuleLists() {
+        // options are current module ids with readable labels
+        const keys = Object.keys(currentModules || {}).sort();
+        const makeOpt = (id) => {
+            const m = currentModules[id];
+            const label = m && m.shortName ? `${m.thread}:${m.shortName}` : id;
+            return `<option value="${id}">${label}</option>`;
+        };
+        if (amFrom) amFrom.innerHTML = keys.map(makeOpt).join('');
+        if (amTo) amTo.innerHTML = keys.map(makeOpt).join('');
+    }
+
+    if (addModuleBtn) addModuleBtn.addEventListener('click', (ev) => { ev.preventDefault(); openAddModule(); });
+    if (amCancel) amCancel.addEventListener('click', (ev) => { ev.preventDefault(); closeAddModule(); });
+
+    if (amCreate) amCreate.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const thread = String((amThread && amThread.value) || '0').trim();
+        const short = String((amName && amName.value) || '').trim();
+        const timeVal = (amTime && amTime.value) ? Number(amTime.value) : null;
+        if (!short) { showPopup('Invalid', 'Module name is required'); return; }
+        // collect from/to selections
+        const fromSel = Array.from((amFrom && amFrom.selectedOptions) || []).map(o => o.value);
+        const toSel = Array.from((amTo && amTo.selectedOptions) || []).map(o => o.value);
+
+        // If editing an existing module
+        if (editingModuleId) {
+            const oldId = editingModuleId;
+            if (!currentModules[oldId]) { showPopup('Error', 'Module not found'); editingModuleId = null; if (amCreate) amCreate.textContent = '作成'; return; }
+            // determine new id and ensure uniqueness (allow same id if unchanged)
+            let newId = `${thread}:${short}`;
+            if (newId !== oldId) {
+                let suffix = 1;
+                while (currentModules[newId]) {
+                    newId = `${thread}:${short}_${suffix++}`;
+                }
+            }
+            try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
+            const m = currentModules[oldId];
+            const prevFrom = Array.from(m.from || []);
+            const prevTo = Array.from(m.to || []);
+            // update or rename in map
+            if (newId !== oldId) {
+                currentModules[newId] = m;
+                delete currentModules[oldId];
+            }
+            m.name = newId;
+            m.thread = thread;
+            m.shortName = short;
+            m.timeProvided = false;
+            if (timeVal != null && Number.isFinite(timeVal) && timeVal > 0) { m.time = timeVal; m.timeProvided = true; }
+            // set new from/to (deduped)
+            m.from = Array.from(new Set(fromSel));
+            m.to = Array.from(new Set(toSel));
+
+            // update DOM data-name if renamed
+            try {
+                const domEl = timelineEl.querySelector(`.module[data-name="${oldId}"]`);
+                if (domEl) { domEl.dataset.name = newId; domEl.setAttribute('data-name', newId); }
+            } catch (e) { console.warn('Failed to update DOM data-name on edit', e); }
+
+            // replace oldId references across all modules
+            const allKeys = Object.keys(currentModules);
+            for (const k of allKeys) {
+                const mm = currentModules[k];
+                if (!mm) continue;
+                if (Array.isArray(mm.from) && mm.from.length) mm.from = mm.from.map(x => x === oldId ? newId : x);
+                if (Array.isArray(mm.to) && mm.to.length) mm.to = mm.to.map(x => x === oldId ? newId : x);
+            }
+
+            // adjust reciprocal references: ensure selected from/to point back to this module
+            for (const f of m.from) {
+                if (!currentModules[f]) continue;
+                currentModules[f].to = Array.from(new Set((currentModules[f].to || []).concat([m.name])));
+            }
+            for (const t of m.to) {
+                if (!currentModules[t]) continue;
+                currentModules[t].from = Array.from(new Set((currentModules[t].from || []).concat([m.name])));
+            }
+
+            // remove reciprocals that were present before but not selected now
+            for (const f of prevFrom) {
+                if (!m.from.includes(f) && currentModules[f]) {
+                    currentModules[f].to = (currentModules[f].to || []).filter(x => x !== m.name);
+                }
+            }
+            for (const t of prevTo) {
+                if (!m.to.includes(t) && currentModules[t]) {
+                    currentModules[t].from = (currentModules[t].from || []).filter(x => x !== m.name);
+                }
+            }
+
+            // done editing
+            editingModuleId = null;
+            if (amCreate) amCreate.textContent = '作成';
+            // revalidate and render
+            const vres = validateModules(currentModules);
+            currentScheduled = vres.scheduled || {};
+            displayValidationErrors(vres.errors || []);
+            try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }]); }
+            closeAddModule();
+            log('Edited module ' + m.name);
+            return;
+        }
+
+        // create-new flow (unchanged)
+        let newId = `${thread}:${short}`;
+        let suffix = 1;
+        while (currentModules[newId]) {
+            newId = `${thread}:${short}_${suffix++}`;
+        }
+
+        // create module object
+        const m = { name: newId, shortName: short, thread: thread, time: 0, from: [], to: [], timeProvided: false };
+        if (timeVal != null && Number.isFinite(timeVal) && timeVal > 0) { m.time = timeVal; m.timeProvided = true; }
+        m.from = Array.from(new Set(fromSel));
+        m.to = Array.from(new Set(toSel));
+
+        // push history and add to currentModules
+        try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
+        currentModules[newId] = m;
+
+        // update reciprocal references on existing modules
+        for (const f of m.from) {
+            if (!currentModules[f]) continue;
+            currentModules[f].to = Array.from(new Set((currentModules[f].to || []).concat([newId])));
+        }
+        for (const t of m.to) {
+            if (!currentModules[t]) continue;
+            currentModules[t].from = Array.from(new Set((currentModules[t].from || []).concat([newId])));
+        }
+
+        // revalidate, schedule and render
+        const vres = validateModules(currentModules);
+        currentScheduled = vres.scheduled || {};
+        displayValidationErrors(vres.errors || []);
+        try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }]); }
+        log('Created module ' + newId);
+        closeAddModule();
+    });
     // show or remove inline error panel and popup for given errors array
     function displayValidationErrors(errors, opts) {
         opts = opts || {};
@@ -549,6 +742,41 @@
 
     // Selection state and Delete-key handler for connectors (top-level)
     let selectedConnector = null;
+    let selectedModule = null;
+    function clearModuleSelection() {
+        selectedModule = null;
+        // remove dim/highlight classes
+        try {
+            const mods = timelineEl.querySelectorAll('.module');
+            mods.forEach(el => { el.classList.remove('dimmed', 'module-focused', 'module-connected'); });
+            const allConns = svg.querySelectorAll('path, .connector-tri, .connector-hit, .connector-tri-hit');
+            allConns.forEach(c => { c.classList.remove('dimmed', 'connector-highlight'); });
+        } catch (e) { console.warn('clearModuleSelection failed', e); }
+    }
+    function setModuleSelection(name) {
+        clearModuleSelection();
+        selectedModule = name;
+        try {
+            // dim everything first
+            timelineEl.querySelectorAll('.module').forEach(el => el.classList.add('dimmed'));
+            svg.querySelectorAll('path, .connector-tri, .connector-hit, .connector-tri-hit').forEach(c => c.classList.add('dimmed'));
+            // highlight selected module
+            const sel = timelineEl.querySelector(`.module[data-name="${name}"]`);
+            if (sel) { sel.classList.remove('dimmed'); sel.classList.add('module-focused'); }
+            // highlight directly connected modules and connectors
+            const conns = svg.querySelectorAll('[data-src][data-tgt]');
+            for (const c of conns) {
+                const s = c.dataset.src, t = c.dataset.tgt;
+                if (s === name || t === name) {
+                    c.classList.remove('dimmed');
+                    c.classList.add('connector-highlight');
+                    const other = (s === name) ? t : s;
+                    const otherEl = timelineEl.querySelector(`.module[data-name="${other}"]`);
+                    if (otherEl) { otherEl.classList.remove('dimmed'); otherEl.classList.add('module-connected'); }
+                }
+            }
+        } catch (e) { console.warn('setModuleSelection failed', e); }
+    }
     function selectArrow(el) {
         if (selectedConnector && selectedConnector !== el) {
             selectedConnector.classList.remove('selected');
@@ -592,20 +820,43 @@
         if (ev.key === 'Control') clearCtrlSource();
     });
 
-    // click elsewhere clears selection
+    // click elsewhere clears connector selection and module selection
     document.addEventListener('click', (ev) => {
-        if (!selectedConnector) return;
-        // if click target is within the selected connector, ignore
-        if (ev.target && (ev.target.classList && (ev.target.classList.contains('connector-path') || ev.target.classList.contains('connector-tri')))) return;
-        selectedConnector.classList.remove('selected');
-        selectedConnector = null;
-        const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = true;
+        // clear connector selection
+        if (selectedConnector) {
+            if (!(ev.target && ev.target.classList && (ev.target.classList.contains('connector-path') || ev.target.classList.contains('connector-tri')))) {
+                try { selectedConnector.classList.remove('selected'); } catch (e) { }
+                selectedConnector = null;
+                const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = true;
+            }
+        }
+        // clear module selection if click outside a module
+        if (selectedModule) {
+            if (!(ev.target && ev.target.closest && ev.target.closest('.module'))) {
+                clearModuleSelection();
+            }
+        }
     });
 
     document.addEventListener('keydown', (ev) => {
         if (ev.key !== 'Delete' && ev.key !== 'Del') return;
         if (!selectedConnector) return;
         deleteSelected(true);
+    });
+
+    // Close modal or popup with Escape
+    document.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Escape' && ev.key !== 'Esc') return;
+        try {
+            // close Add Module modal if open
+            if (addModuleModal && addModuleModal.classList && addModuleModal.classList.contains('open')) {
+                closeAddModule();
+            }
+        } catch (e) { /* ignore */ }
+        try {
+            const popup = document.getElementById('seq-popup');
+            if (popup) popup.remove();
+        } catch (e) { /* ignore */ }
     });
 
     // shared deletion routine used by Delete key and Delete Arrow button
@@ -696,32 +947,42 @@
             box.style.borderLeft = `6px solid ${boxColor}`;
             // click handler: support ctrl-click dependency creation (ctrl: select source -> click target)
             box.addEventListener('click', (ev) => {
-                // only operate while Ctrl is held
-                if (!ev.ctrlKey) { clearCtrlSource(); return; }
-                // if no source selected yet, set this as source
-                if (!ctrlSourceName) { setCtrlSource(name); log(`Ctrl-source: ${name}`); return; }
-                // if source is same as clicked, ignore
-                if (ctrlSourceName === name) return;
-                // create dependency ctrlSourceName -> name
-                try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
-                // ensure modules exist in currentModules
-                currentModules[ctrlSourceName] = currentModules[ctrlSourceName] || (modules[ctrlSourceName] ? JSON.parse(JSON.stringify(modules[ctrlSourceName])) : { name: ctrlSourceName, thread: null, from: [], to: [], time: 0 });
-                currentModules[name] = currentModules[name] || (modules[name] ? JSON.parse(JSON.stringify(modules[name])) : { name: name, thread: null, from: [], to: [], time: 0 });
-                if (!currentModules[ctrlSourceName].to) currentModules[ctrlSourceName].to = [];
-                if (!currentModules[name].from) currentModules[name].from = [];
-                if (!currentModules[ctrlSourceName].to.includes(name)) currentModules[ctrlSourceName].to.push(name);
-                if (!currentModules[name].from.includes(ctrlSourceName)) currentModules[name].from.push(ctrlSourceName);
-                // dedupe
-                currentModules[ctrlSourceName].to = Array.from(new Set(currentModules[ctrlSourceName].to));
-                currentModules[name].from = Array.from(new Set(currentModules[name].from));
-                // clear ctrl visual
+                // Ctrl-click: dependency creation flow
+                if (ev.ctrlKey) {
+                    // if no source selected yet, set this as source
+                    if (!ctrlSourceName) { setCtrlSource(name); log(`Ctrl-source: ${name}`); return; }
+                    // if source is same as clicked, ignore
+                    if (ctrlSourceName === name) return;
+                    // create dependency ctrlSourceName -> name
+                    try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
+                    // ensure modules exist in currentModules
+                    currentModules[ctrlSourceName] = currentModules[ctrlSourceName] || (modules[ctrlSourceName] ? JSON.parse(JSON.stringify(modules[ctrlSourceName])) : { name: ctrlSourceName, thread: null, from: [], to: [], time: 0 });
+                    currentModules[name] = currentModules[name] || (modules[name] ? JSON.parse(JSON.stringify(modules[name])) : { name: name, thread: null, from: [], to: [], time: 0 });
+                    if (!currentModules[ctrlSourceName].to) currentModules[ctrlSourceName].to = [];
+                    if (!currentModules[name].from) currentModules[name].from = [];
+                    if (!currentModules[ctrlSourceName].to.includes(name)) currentModules[ctrlSourceName].to.push(name);
+                    if (!currentModules[name].from.includes(ctrlSourceName)) currentModules[name].from.push(ctrlSourceName);
+                    // dedupe
+                    currentModules[ctrlSourceName].to = Array.from(new Set(currentModules[ctrlSourceName].to));
+                    currentModules[name].from = Array.from(new Set(currentModules[name].from));
+                    // clear ctrl visual
+                    clearCtrlSource();
+                    // validate, reschedule and render
+                    const vres = validateModules(currentModules);
+                    currentScheduled = vres.scheduled || {};
+                    displayValidationErrors(vres.errors || []);
+                    try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }]); }
+                    log(`Added dependency ${ctrlSourceName} → ${name}`);
+                    return;
+                }
+                // Shift+click: open editor
+                if (ev.shiftKey) { ev.preventDefault(); openModuleEditor(name); return; }
+                // Normal click: focus this module and dim unrelated items
+                ev.stopPropagation();
+                // clear any ctrl-source visual state
                 clearCtrlSource();
-                // validate, reschedule and render
-                const vres = validateModules(currentModules);
-                currentScheduled = vres.scheduled || {};
-                displayValidationErrors(vres.errors || []);
-                try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }]); }
-                log(`Added dependency ${ctrlSourceName} → ${name}`);
+                if (selectedModule === name) { clearModuleSelection(); return; }
+                setModuleSelection(name);
             });
             lane.el = lane.el || lane;
             lane.el.appendChild(box);
@@ -888,6 +1149,16 @@
         timelineEl.style.minWidth = width + 'px';
         // attach drag handlers so modules can be moved between lanes
         try { attachDragHandlers(modules); } catch (e) { console.warn('attachDragHandlers failed', e); }
+
+        // Update total/end time display (the finish time of the last-executed module)
+        try {
+            const totalEl = document.getElementById('totalTime');
+            if (totalEl) {
+                const finishes = Object.values(scheduled || {}).map(s => (s && s.finish) ? Number(s.finish) : 0);
+                const endTime = finishes.length ? Math.max(...finishes) : 0;
+                totalEl.textContent = `終了時刻: ${Math.round(endTime)} ms`;
+            }
+        } catch (e) { console.warn('Failed to update totalTime', e); }
     }
 
     function handleFiles(fileList) {
