@@ -324,3 +324,32 @@ header {
 .connector-path:hover {
     stroke-width: 3;
 }
+
+/* focused / dimming styles when a module is selected */
+.module.dimmed {
+    opacity: 0.22;
+    filter: none;
+}
+
+.module.module-focused {
+    opacity: 1;
+    transform: translateY(-3px);
+    box-shadow: 0 14px 30px rgba(30, 40, 80, 0.14);
+}
+
+.module.module-connected {
+    opacity: 0.95;
+}
+
+.connector-path.dimmed,
+.connector-tri.dimmed,
+.connector-hit.dimmed,
+.connector-tri-hit.dimmed {
+    opacity: 0.08;
+}
+
+.connector-path.connector-highlight,
+.connector-tri.connector-highlight {
+    opacity: 1;
+    stroke-width: 3 !important;
+}

@@ -742,6 +742,41 @@
 
     // Selection state and Delete-key handler for connectors (top-level)
     let selectedConnector = null;
+    let selectedModule = null;
+    function clearModuleSelection() {
+        selectedModule = null;
+        // remove dim/highlight classes
+        try {
+            const mods = timelineEl.querySelectorAll('.module');
+            mods.forEach(el => { el.classList.remove('dimmed', 'module-focused', 'module-connected'); });
+            const allConns = svg.querySelectorAll('path, .connector-tri, .connector-hit, .connector-tri-hit');
+            allConns.forEach(c => { c.classList.remove('dimmed', 'connector-highlight'); });
+        } catch (e) { console.warn('clearModuleSelection failed', e); }
+    }
+    function setModuleSelection(name) {
+        clearModuleSelection();
+        selectedModule = name;
+        try {
+            // dim everything first
+            timelineEl.querySelectorAll('.module').forEach(el => el.classList.add('dimmed'));
+            svg.querySelectorAll('path, .connector-tri, .connector-hit, .connector-tri-hit').forEach(c => c.classList.add('dimmed'));
+            // highlight selected module
+            const sel = timelineEl.querySelector(`.module[data-name="${name}"]`);
+            if (sel) { sel.classList.remove('dimmed'); sel.classList.add('module-focused'); }
+            // highlight directly connected modules and connectors
+            const conns = svg.querySelectorAll('[data-src][data-tgt]');
+            for (const c of conns) {
+                const s = c.dataset.src, t = c.dataset.tgt;
+                if (s === name || t === name) {
+                    c.classList.remove('dimmed');
+                    c.classList.add('connector-highlight');
+                    const other = (s === name) ? t : s;
+                    const otherEl = timelineEl.querySelector(`.module[data-name="${other}"]`);
+                    if (otherEl) { otherEl.classList.remove('dimmed'); otherEl.classList.add('module-connected'); }
+                }
+            }
+        } catch (e) { console.warn('setModuleSelection failed', e); }
+    }
     function selectArrow(el) {
         if (selectedConnector && selectedConnector !== el) {
             selectedConnector.classList.remove('selected');
@@ -785,14 +820,22 @@
         if (ev.key === 'Control') clearCtrlSource();
     });
 
-    // click elsewhere clears selection
+    // click elsewhere clears connector selection and module selection
     document.addEventListener('click', (ev) => {
-        if (!selectedConnector) return;
-        // if click target is within the selected connector, ignore
-        if (ev.target && (ev.target.classList && (ev.target.classList.contains('connector-path') || ev.target.classList.contains('connector-tri')))) return;
-        selectedConnector.classList.remove('selected');
-        selectedConnector = null;
-        const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = true;
+        // clear connector selection
+        if (selectedConnector) {
+            if (!(ev.target && ev.target.classList && (ev.target.classList.contains('connector-path') || ev.target.classList.contains('connector-tri')))) {
+                try { selectedConnector.classList.remove('selected'); } catch (e) { }
+                selectedConnector = null;
+                const delBtn = document.getElementById('deleteArrowBtn'); if (delBtn) delBtn.disabled = true;
+            }
+        }
+        // clear module selection if click outside a module
+        if (selectedModule) {
+            if (!(ev.target && ev.target.closest && ev.target.closest('.module'))) {
+                clearModuleSelection();
+            }
+        }
     });
 
     document.addEventListener('keydown', (ev) => {
@@ -889,32 +932,40 @@
             box.style.borderLeft = `6px solid ${boxColor}`;
             // click handler: support ctrl-click dependency creation (ctrl: select source -> click target)
             box.addEventListener('click', (ev) => {
-                // only operate while Ctrl is held
-                if (!ev.ctrlKey) { clearCtrlSource(); return; }
-                // if no source selected yet, set this as source
-                if (!ctrlSourceName) { setCtrlSource(name); log(`Ctrl-source: ${name}`); return; }
-                // if source is same as clicked, ignore
-                if (ctrlSourceName === name) return;
-                // create dependency ctrlSourceName -> name
-                try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
-                // ensure modules exist in currentModules
-                currentModules[ctrlSourceName] = currentModules[ctrlSourceName] || (modules[ctrlSourceName] ? JSON.parse(JSON.stringify(modules[ctrlSourceName])) : { name: ctrlSourceName, thread: null, from: [], to: [], time: 0 });
-                currentModules[name] = currentModules[name] || (modules[name] ? JSON.parse(JSON.stringify(modules[name])) : { name: name, thread: null, from: [], to: [], time: 0 });
-                if (!currentModules[ctrlSourceName].to) currentModules[ctrlSourceName].to = [];
-                if (!currentModules[name].from) currentModules[name].from = [];
-                if (!currentModules[ctrlSourceName].to.includes(name)) currentModules[ctrlSourceName].to.push(name);
-                if (!currentModules[name].from.includes(ctrlSourceName)) currentModules[name].from.push(ctrlSourceName);
-                // dedupe
-                currentModules[ctrlSourceName].to = Array.from(new Set(currentModules[ctrlSourceName].to));
-                currentModules[name].from = Array.from(new Set(currentModules[name].from));
-                // clear ctrl visual
+                // Ctrl-click: dependency creation flow
+                if (ev.ctrlKey) {
+                    // if no source selected yet, set this as source
+                    if (!ctrlSourceName) { setCtrlSource(name); log(`Ctrl-source: ${name}`); return; }
+                    // if source is same as clicked, ignore
+                    if (ctrlSourceName === name) return;
+                    // create dependency ctrlSourceName -> name
+                    try { pushHistory(currentModules || {}); } catch (e) { console.warn('pushHistory failed', e); }
+                    // ensure modules exist in currentModules
+                    currentModules[ctrlSourceName] = currentModules[ctrlSourceName] || (modules[ctrlSourceName] ? JSON.parse(JSON.stringify(modules[ctrlSourceName])) : { name: ctrlSourceName, thread: null, from: [], to: [], time: 0 });
+                    currentModules[name] = currentModules[name] || (modules[name] ? JSON.parse(JSON.stringify(modules[name])) : { name: name, thread: null, from: [], to: [], time: 0 });
+                    if (!currentModules[ctrlSourceName].to) currentModules[ctrlSourceName].to = [];
+                    if (!currentModules[name].from) currentModules[name].from = [];
+                    if (!currentModules[ctrlSourceName].to.includes(name)) currentModules[ctrlSourceName].to.push(name);
+                    if (!currentModules[name].from.includes(ctrlSourceName)) currentModules[name].from.push(ctrlSourceName);
+                    // dedupe
+                    currentModules[ctrlSourceName].to = Array.from(new Set(currentModules[ctrlSourceName].to));
+                    currentModules[name].from = Array.from(new Set(currentModules[name].from));
+                    // clear ctrl visual
+                    clearCtrlSource();
+                    // validate, reschedule and render
+                    const vres = validateModules(currentModules);
+                    currentScheduled = vres.scheduled || {};
+                    displayValidationErrors(vres.errors || []);
+                    try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }]); }
+                    log(`Added dependency ${ctrlSourceName} → ${name}`);
+                    return;
+                }
+                // Normal click: focus this module and dim unrelated items
+                ev.stopPropagation();
+                // clear any ctrl-source visual state
                 clearCtrlSource();
-                // validate, reschedule and render
-                const vres = validateModules(currentModules);
-                currentScheduled = vres.scheduled || {};
-                displayValidationErrors(vres.errors || []);
-                try { render(currentModules, currentScheduled); } catch (e) { displayValidationErrors([{ type: 'render', msg: MSG.renderFailed + ': ' + e.message }]); }
-                log(`Added dependency ${ctrlSourceName} → ${name}`);
+                if (selectedModule === name) { clearModuleSelection(); return; }
+                setModuleSelection(name);
             });
             // double-click to edit module
             box.addEventListener('dblclick', (ev) => {
