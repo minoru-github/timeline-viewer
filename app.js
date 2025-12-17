@@ -161,12 +161,13 @@
         const m = currentModules[moduleId];
         // set edit target first so option lists can exclude self
         editingModuleId = moduleId;
-        populateAddModuleLists();
-        // populate fields
+        // populate fields first so list filtering uses correct thread/time
         try {
             amThread.value = String(m.thread || (m.name && m.name.split(':')[0]) || '0');
             amName.value = String(m.shortName || (m.name && m.name.split(':')[1]) || '');
             amTime.value = m.timeProvided ? String(m.time) : '';
+            // now refresh option lists to reflect thread/time filter
+            populateAddModuleLists();
             // select from/to options
             const fromVals = new Set(m.from || []);
             const toVals = new Set(m.to || []);
