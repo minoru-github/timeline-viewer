@@ -84,6 +84,14 @@
         , renderFailed: 'レンダリング中にエラーが発生しました: '
     };
 
+    // Format time value with up to 3 decimal places (trim trailing zeros)
+    function fmtTime(n) {
+        const num = Number(n);
+        if (!Number.isFinite(num)) return String(n);
+        const s = num.toFixed(3);
+        return s.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+    }
+
     function log(s) { logEl.textContent = s }
 
     // show an in-page popup message (error/info)
@@ -1123,7 +1131,7 @@
             const unitPx = Math.max(1, Math.round(1 * scale));
             const sizePx = Math.max(unitPx, Math.round(durForSize * scale));
             // set inner HTML with optional meta
-            const metaHtml = isZero ? '' : `<div class="meta">${s.start} → ${s.finish} ms</div>`;
+            const metaHtml = isZero ? '' : `<div class="meta">${fmtTime(s.start)} → ${fmtTime(s.finish)} ms</div>`;
             box.innerHTML = `<div class="name">${label}</div>${metaHtml}`;
             // visual tweaks for zero-duration modules
             if (isZero) {
@@ -1450,7 +1458,7 @@
             if (totalEl) {
                 const finishes = Object.values(scheduled || {}).map(s => (s && s.finish) ? Number(s.finish) : 0);
                 const endTime = finishes.length ? Math.max(...finishes) : 0;
-                totalEl.textContent = `終了時刻: ${Math.round(endTime)} ms`;
+                totalEl.textContent = `終了時刻: ${fmtTime(endTime)} ms`;
             }
         } catch (e) { console.warn('Failed to update totalTime', e); }
     }
