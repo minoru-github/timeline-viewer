@@ -188,19 +188,45 @@
     }
 
     function populateAddModuleLists() {
-        // options are current module ids with readable labels
-        const keys = Object.keys(currentModules || {}).sort();
+        // Filter options based on current thread and time input per spec.
+        const allIds = Object.keys(currentModules || {}).sort();
+        const currentThread = String((amThread && amThread.value) || '0');
+        let thisTime = 0;
+        try {
+            const v = (amTime && amTime.value !== '') ? Number(amTime.value) : 0; // empty treated as 0
+            thisTime = Number.isFinite(v) ? v : 0;
+        } catch (_) { thisTime = 0; }
+
+        const filteredIds = allIds.filter((id) => {
+            const m = currentModules[id];
+            const mThread = String(m && m.thread);
+            const mTimeRaw = (m && m.timeProvided) ? Number(m.time) : 0;
+            const mTime = Number.isFinite(mTimeRaw) ? mTimeRaw : 0;
+            if (thisTime > 0) {
+                // time > 0: show same-thread only
+                return mThread === currentThread;
+            } else {
+                // time == 0: show all same-thread; other threads only modules with time == 0
+                if (mThread === currentThread) return true;
+                return mTime === 0;
+            }
+        });
+
         const makeOpt = (id) => {
             const m = currentModules[id];
             const label = m && m.shortName ? `${m.thread}:${m.shortName}` : id;
             return `<option value="${id}">${label}</option>`;
         };
-        if (amFrom) amFrom.innerHTML = keys.map(makeOpt).join('');
-        if (amTo) amTo.innerHTML = keys.map(makeOpt).join('');
+        if (amFrom) amFrom.innerHTML = filteredIds.map(makeOpt).join('');
+        if (amTo) amTo.innerHTML = filteredIds.map(makeOpt).join('');
     }
 
     if (addModuleBtn) addModuleBtn.addEventListener('click', (ev) => { ev.preventDefault(); openAddModule(); });
     if (amCancel) amCancel.addEventListener('click', (ev) => { ev.preventDefault(); closeAddModule(); });
+
+    // Refresh lists when thread or time changes while modal is open
+    if (amThread) amThread.addEventListener('input', () => { try { populateAddModuleLists(); } catch (_) { } });
+    if (amTime) amTime.addEventListener('input', () => { try { populateAddModuleLists(); } catch (_) { } });
 
     // Global handler: when Add Module modal is open, Enter should trigger Create/Save
     document.addEventListener('keydown', (ev) => {
@@ -314,7 +340,8 @@
 
         // create module object
         const m = { name: newId, shortName: short, thread: thread, time: 0, from: [], to: [], timeProvided: false };
-        if (timeVal != null && Number.isFinite(timeVal) && timeVal > 0) { m.time = timeVal; m.timeProvided = true; }
+        // Treat 0 as a valid provided value so it round-trips in the editor
+        if (timeVal != null && Number.isFinite(timeVal) && timeVal >= 0) { m.time = timeVal; m.timeProvided = true; }
         m.from = Array.from(new Set(fromSel));
         m.to = Array.from(new Set(toSel));
 
@@ -1050,7 +1077,20 @@
         }
 
         // create module boxes inside lanes
-        for (const name in scheduled) {
+        // Render order: by thread, then by start time to allow non-overlap adjustment
+        const orderedNames = Object.keys(scheduled).sort((a, b) => {
+            const sa = scheduled[a];
+            const sb = scheduled[b];
+            if (sa.thread !== sb.thread) return String(sa.thread).localeCompare(String(sb.thread));
+            if (sa.start !== sb.start) return sa.start - sb.start;
+            const da = Number.isFinite(sa.dur) ? sa.dur : 0;
+            const db = Number.isFinite(sb.dur) ? sb.dur : 0;
+            if (da !== db) return da - db; // zero-duration first when start ties
+            return a.localeCompare(b);
+        });
+        const lastEndByThread = {}; // pixel right/bottom edge to avoid overlaps within a thread
+        const minGapPx = 4;
+        for (const name of orderedNames) {
             const s = scheduled[name];
             const m = modules[name];
             const lane = lanes[s.thread];
@@ -1070,7 +1110,13 @@
             box.innerHTML = `<div class="name">${label}</div>${metaHtml}`;
             if (orientation === 'horizontal') {
                 const leftMargin = 200; // account for label area
-                box.style.left = (s.start * scale + leftMargin) + 'px';
+                let leftPx = (s.start * scale + leftMargin);
+                // compute width for overlap avoidance (square for zero-duration)
+                const widthPx = sizePx;
+                const lastEnd = lastEndByThread[s.thread] ?? -Infinity;
+                if (leftPx < lastEnd + minGapPx) leftPx = lastEnd + minGapPx;
+                box.style.left = leftPx + 'px';
+                lastEndByThread[s.thread] = leftPx + widthPx;
                 // render as square when duration is zero; otherwise width encodes duration
                 if (isZero) {
                     box.style.width = sizePx + 'px';
@@ -1087,7 +1133,12 @@
             } else {
                 // vertical: place by top (time) within column
                 const topMargin = 48; // space for label
-                box.style.top = (s.start * scale + topMargin) + 'px';
+                let topPx = (s.start * scale + topMargin);
+                const heightPx = isZero ? sizePx : Math.max(24, Math.round(s.dur * scale));
+                const lastEnd = lastEndByThread[s.thread] ?? -Infinity;
+                if (topPx < lastEnd + minGapPx) topPx = lastEnd + minGapPx;
+                box.style.top = topPx + 'px';
+                lastEndByThread[s.thread] = topPx + heightPx;
                 // render height from duration; for zero-duration render square of size for dur=1
                 if (isZero) {
                     box.style.height = sizePx + 'px';
