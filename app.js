@@ -202,11 +202,24 @@
     if (addModuleBtn) addModuleBtn.addEventListener('click', (ev) => { ev.preventDefault(); openAddModule(); });
     if (amCancel) amCancel.addEventListener('click', (ev) => { ev.preventDefault(); closeAddModule(); });
 
+    // Global handler: when Add Module modal is open, Enter should trigger Create/Save
+    document.addEventListener('keydown', (ev) => {
+        try {
+            if (!addModuleModal || !addModuleModal.classList.contains('open')) return;
+            if (ev.key !== 'Enter') return;
+            // Avoid triggering when focus is on a multi-select (Enter used for other interactions)
+            const tag = (ev.target && ev.target.tagName) ? ev.target.tagName.toUpperCase() : '';
+            if (tag === 'TEXTAREA') return;
+            ev.preventDefault();
+            if (amCreate) amCreate.click();
+        } catch (e) { console.warn('Enter handler error', e); }
+    });
+
     if (amCreate) amCreate.addEventListener('click', (ev) => {
         ev.preventDefault();
         const thread = String((amThread && amThread.value) || '0').trim();
         const short = String((amName && amName.value) || '').trim();
-        const timeVal = (amTime && amTime.value) ? Number(amTime.value) : null;
+        const timeVal = (amTime && amTime.value !== '') ? Number(amTime.value) : null;
         if (!short) { showPopup('Invalid', 'Module name is required'); return; }
         // collect from/to selections
         const fromSel = Array.from((amFrom && amFrom.selectedOptions) || []).map(o => o.value);
@@ -237,7 +250,7 @@
             m.thread = thread;
             m.shortName = short;
             m.timeProvided = false;
-            if (timeVal != null && Number.isFinite(timeVal) && timeVal > 0) { m.time = timeVal; m.timeProvided = true; }
+            if (timeVal != null && Number.isFinite(timeVal) && timeVal >= 0) { m.time = timeVal; m.timeProvided = true; }
             // set new from/to (deduped)
             m.from = Array.from(new Set(fromSel));
             m.to = Array.from(new Set(toSel));
@@ -458,7 +471,7 @@
         for (const name in modules) {
             const m = modules[name];
             if (m.timeProvided) {
-                if (!Number.isFinite(m.time) || m.time <= 0) badTimes.push(`${name}: ${m.time}`);
+                if (!Number.isFinite(m.time) || m.time < 0) badTimes.push(`${name}: ${m.time}`);
             }
         }
         if (badTimes.length) errors.push(MSG.invalidTimeValues + badTimes.join(' ; '));
@@ -743,6 +756,7 @@
                     log(MSG.renderFailed + (e && e.message ? e.message : String(e)));
                 }
             });
+
         });
     }
 
@@ -1047,11 +1061,24 @@
             const boxColor = colorFor(name);
             box.style.borderLeft = `6px solid ${boxColor}`;
             const label = m && m.shortName ? m.shortName : name;
-            box.innerHTML = `<div class="name">${label}</div><div class="meta">${s.start} → ${s.finish} ms</div>`;
+            // If duration is zero, hide time meta and treat size as duration=1 for layout
+            const isZero = !s.dur || Number(s.dur) === 0;
+            const durForSize = isZero ? 1 : (Number.isFinite(s.dur) ? s.dur : 0);
+            const sizePx = Math.max(40, Math.round(durForSize * scale));
+            // set inner HTML with optional meta
+            const metaHtml = isZero ? '' : `<div class="meta">${s.start} → ${s.finish} ms</div>`;
+            box.innerHTML = `<div class="name">${label}</div>${metaHtml}`;
             if (orientation === 'horizontal') {
                 const leftMargin = 200; // account for label area
                 box.style.left = (s.start * scale + leftMargin) + 'px';
-                box.style.width = Math.max(40, Math.round(s.dur * scale)) + 'px';
+                // render as square when duration is zero; otherwise width encodes duration
+                if (isZero) {
+                    box.style.width = sizePx + 'px';
+                    box.style.height = sizePx + 'px';
+                } else {
+                    box.style.width = sizePx + 'px';
+                    box.style.height = '';
+                }
                 box.style.top = '50%';
                 box.style.transform = 'translateY(-50%)';
                 // accent on left for horizontal
@@ -1061,14 +1088,16 @@
                 // vertical: place by top (time) within column
                 const topMargin = 48; // space for label
                 box.style.top = (s.start * scale + topMargin) + 'px';
+                // render height from duration; for zero-duration render square of size for dur=1
+                if (isZero) {
+                    box.style.height = sizePx + 'px';
+                    box.style.width = sizePx + 'px';
+                } else {
+                    box.style.height = Math.max(24, Math.round(s.dur * scale)) + 'px';
+                    box.style.width = '120px';
+                }
                 box.style.left = '50%';
                 box.style.transform = 'translateX(-50%)';
-                // height encodes duration in vertical mode
-                const minH = 24;
-                const h = Math.max(minH, Math.round(s.dur * scale));
-                box.style.height = h + 'px';
-                // keep width reasonable
-                box.style.width = '120px';
                 // accent on top for vertical
                 box.style.borderTop = `6px solid ${boxColor}`;
                 box.style.borderLeft = '';
@@ -1393,7 +1422,7 @@
             for (const name in modules) {
                 const m = modules[name];
                 if (m.timeProvided) {
-                    if (!Number.isFinite(m.time) || m.time <= 0) {
+                    if (!Number.isFinite(m.time) || m.time < 0) {
                         badTimes.push(`${name}: ${m.time}`);
                     }
                 }
