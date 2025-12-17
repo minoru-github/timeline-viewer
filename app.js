@@ -149,7 +149,9 @@
         // populate module lists
         populateAddModuleLists();
         if (addModuleModal) addModuleModal.classList.add('open');
-        if (amName) amName.focus();
+        // Focus thread input by default when opening Add Module
+        try { if (amThread) { amThread.focus(); amThread.select && amThread.select(); } }
+        catch (e) { if (amName) amName.focus(); }
     }
 
     function openModuleEditor(moduleId) {
