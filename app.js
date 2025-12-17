@@ -1117,7 +1117,7 @@
             if (isZero) {
                 // sharp corners and light gray background
                 box.style.borderRadius = '0';
-                box.style.background = '#f2f3f5';
+                box.style.background = '#e0e2e5';
             } else {
                 box.style.borderRadius = '';
                 box.style.background = '';
