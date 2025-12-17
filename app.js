@@ -1113,6 +1113,12 @@
             // set inner HTML with optional meta
             const metaHtml = isZero ? '' : `<div class="meta">${s.start} → ${s.finish} ms</div>`;
             box.innerHTML = `<div class="name">${label}</div>${metaHtml}`;
+            // visual: time=0 should have sharp corners (no rounding)
+            if (isZero) {
+                box.style.borderRadius = '0';
+            } else {
+                box.style.borderRadius = '';
+            }
             if (orientation === 'horizontal') {
                 const leftMargin = 200; // account for label area
                 let leftPx = (s.start * scale + leftMargin);
