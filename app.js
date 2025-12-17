@@ -1052,14 +1052,24 @@
                 box.style.width = Math.max(40, Math.round(s.dur * scale)) + 'px';
                 box.style.top = '50%';
                 box.style.transform = 'translateY(-50%)';
+                // accent on left for horizontal
+                box.style.borderLeft = `6px solid ${boxColor}`;
+                box.style.borderTop = '';
             } else {
                 // vertical: place by top (time) within column
                 const topMargin = 48; // space for label
                 box.style.top = (s.start * scale + topMargin) + 'px';
                 box.style.left = '50%';
                 box.style.transform = 'translateX(-50%)';
-                // width stays similar
-                box.style.width = Math.max(40, Math.round(s.dur * scale)) + 'px';
+                // height encodes duration in vertical mode
+                const minH = 24;
+                const h = Math.max(minH, Math.round(s.dur * scale));
+                box.style.height = h + 'px';
+                // keep width reasonable
+                box.style.width = '120px';
+                // accent on top for vertical
+                box.style.borderTop = `6px solid ${boxColor}`;
+                box.style.borderLeft = '';
             }
             // click handler: support Shift-click dependency creation (Shift: select source -> click target)
             box.addEventListener('click', (ev) => {
@@ -1281,9 +1291,17 @@
 
                 // arrow head at end point
                 const tri = document.createElementNS(svgNS, 'path');
-                const px = 8; // triangle length
-                const py = 5; // half height
-                const triD = `M ${endX} ${endY} L ${endX - px} ${endY - py} L ${endX - px} ${endY + py} Z`;
+                let triD;
+                if (orientation === 'horizontal') {
+                    const px = 8; // triangle length
+                    const py = 5; // half height
+                    triD = `M ${endX} ${endY} L ${endX - px} ${endY - py} L ${endX - px} ${endY + py} Z`;
+                } else {
+                    // vertical: triangle pointing down at endX,endY
+                    const px = 6; // half base
+                    const py = 10; // height
+                    triD = `M ${endX} ${endY} L ${endX - px} ${endY - py} L ${endX + px} ${endY - py} Z`;
+                }
                 // hit triangle (invisible, slightly larger) to ease selection of arrowhead
                 const triHit = document.createElementNS(svgNS, 'path');
                 triHit.setAttribute('d', triD);
