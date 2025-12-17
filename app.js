@@ -189,6 +189,10 @@
     }
 
     function populateAddModuleLists() {
+        // Preserve current selections if possible across refreshes
+        const prevFromSel = new Set(Array.from((amFrom && amFrom.selectedOptions) || []).map(o => o.value));
+        const prevToSel = new Set(Array.from((amTo && amTo.selectedOptions) || []).map(o => o.value));
+
         // Filter options based on current thread and time input per spec.
         const allIds = Object.keys(currentModules || {}).sort();
         const currentThread = String((amThread && amThread.value) || '0');
@@ -215,13 +219,18 @@
             }
         });
 
-        const makeOpt = (id) => {
+        const makeOptWithSel = (id, isSelected) => {
             const m = currentModules[id];
             const label = m && m.shortName ? `${m.thread}:${m.shortName}` : id;
-            return `<option value="${id}">${label}</option>`;
+            return `<option value="${id}"${isSelected ? ' selected' : ''}>${label}</option>`;
         };
-        if (amFrom) amFrom.innerHTML = filteredIds.map(makeOpt).join('');
-        if (amTo) amTo.innerHTML = filteredIds.map(makeOpt).join('');
+
+        if (amFrom) {
+            amFrom.innerHTML = filteredIds.map(id => makeOptWithSel(id, prevFromSel.has(id))).join('');
+        }
+        if (amTo) {
+            amTo.innerHTML = filteredIds.map(id => makeOptWithSel(id, prevToSel.has(id))).join('');
+        }
     }
 
     if (addModuleBtn) addModuleBtn.addEventListener('click', (ev) => { ev.preventDefault(); openAddModule(); });
