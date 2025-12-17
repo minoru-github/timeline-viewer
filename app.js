@@ -1113,11 +1113,14 @@
             // set inner HTML with optional meta
             const metaHtml = isZero ? '' : `<div class="meta">${s.start} → ${s.finish} ms</div>`;
             box.innerHTML = `<div class="name">${label}</div>${metaHtml}`;
-            // visual: time=0 should have sharp corners (no rounding)
+            // visual tweaks for zero-duration modules
             if (isZero) {
+                // sharp corners and light gray background
                 box.style.borderRadius = '0';
+                box.style.background = '#f2f3f5';
             } else {
                 box.style.borderRadius = '';
+                box.style.background = '';
             }
             if (orientation === 'horizontal') {
                 const leftMargin = 200; // account for label area
