@@ -159,8 +159,9 @@
     function openModuleEditor(moduleId) {
         if (!moduleId || !currentModules[moduleId]) { openAddModule(); return; }
         const m = currentModules[moduleId];
-        populateAddModuleLists();
+        // set edit target first so option lists can exclude self
         editingModuleId = moduleId;
+        populateAddModuleLists();
         // populate fields
         try {
             amThread.value = String(m.thread || (m.name && m.name.split(':')[0]) || '0');
@@ -202,6 +203,8 @@
             const mThread = String(m && m.thread);
             const mTimeRaw = (m && m.timeProvided) ? Number(m.time) : 0;
             const mTime = Number.isFinite(mTimeRaw) ? mTimeRaw : 0;
+            // Exclude self when editing to prevent selecting itself in From/To
+            if (editingModuleId && id === editingModuleId) return false;
             if (thisTime > 0) {
                 // time > 0: show same-thread only
                 return mThread === currentThread;
@@ -248,8 +251,8 @@
         const timeVal = (amTime && amTime.value !== '') ? Number(amTime.value) : null;
         if (!short) { showPopup('Invalid', 'Module name is required'); return; }
         // collect from/to selections
-        const fromSel = Array.from((amFrom && amFrom.selectedOptions) || []).map(o => o.value);
-        const toSel = Array.from((amTo && amTo.selectedOptions) || []).map(o => o.value);
+        let fromSel = Array.from((amFrom && amFrom.selectedOptions) || []).map(o => o.value);
+        let toSel = Array.from((amTo && amTo.selectedOptions) || []).map(o => o.value);
 
         // If editing an existing module
         if (editingModuleId) {
@@ -277,7 +280,9 @@
             m.shortName = short;
             m.timeProvided = false;
             if (timeVal != null && Number.isFinite(timeVal) && timeVal >= 0) { m.time = timeVal; m.timeProvided = true; }
-            // set new from/to (deduped)
+            // remove any accidental self-references (old or new id) and set new from/to (deduped)
+            fromSel = fromSel.filter(v => v && v !== oldId && v !== newId);
+            toSel = toSel.filter(v => v && v !== oldId && v !== newId);
             m.from = Array.from(new Set(fromSel));
             m.to = Array.from(new Set(toSel));
 
@@ -1117,14 +1122,9 @@
                 if (leftPx < lastEnd + minGapPx) leftPx = lastEnd + minGapPx;
                 box.style.left = leftPx + 'px';
                 lastEndByThread[s.thread] = leftPx + widthPx;
-                // render as square when duration is zero; otherwise width encodes duration
-                if (isZero) {
-                    box.style.width = sizePx + 'px';
-                    box.style.height = sizePx + 'px';
-                } else {
-                    box.style.width = sizePx + 'px';
-                    box.style.height = '';
-                }
+                // render: do NOT force square for zero; always use normal height
+                box.style.width = sizePx + 'px';
+                box.style.height = '';
                 box.style.top = '50%';
                 box.style.transform = 'translateY(-50%)';
                 // accent on left for horizontal
@@ -1134,19 +1134,14 @@
                 // vertical: place by top (time) within column
                 const topMargin = 48; // space for label
                 let topPx = (s.start * scale + topMargin);
-                const heightPx = isZero ? sizePx : Math.max(24, Math.round(s.dur * scale));
+                const heightPx = Math.max(24, Math.round((isZero ? durForSize : s.dur) * scale));
                 const lastEnd = lastEndByThread[s.thread] ?? -Infinity;
                 if (topPx < lastEnd + minGapPx) topPx = lastEnd + minGapPx;
                 box.style.top = topPx + 'px';
                 lastEndByThread[s.thread] = topPx + heightPx;
-                // render height from duration; for zero-duration render square of size for dur=1
-                if (isZero) {
-                    box.style.height = sizePx + 'px';
-                    box.style.width = sizePx + 'px';
-                } else {
-                    box.style.height = Math.max(24, Math.round(s.dur * scale)) + 'px';
-                    box.style.width = '120px';
-                }
+                // render height from duration (use dur=1 when zero), keep normal width (no square)
+                box.style.height = heightPx + 'px';
+                box.style.width = '120px';
                 box.style.left = '50%';
                 box.style.transform = 'translateX(-50%)';
                 // accent on top for vertical
