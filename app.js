@@ -1119,7 +1119,9 @@
             // If duration is zero, hide time meta and treat size as duration=1 for layout
             const isZero = !s.dur || Number(s.dur) === 0;
             const durForSize = isZero ? 1 : (Number.isFinite(s.dur) ? s.dur : 0);
-            const sizePx = Math.max(40, Math.round(durForSize * scale));
+            // time-axis minimum equals the rendered size for Time=1
+            const unitPx = Math.max(1, Math.round(1 * scale));
+            const sizePx = Math.max(unitPx, Math.round(durForSize * scale));
             // set inner HTML with optional meta
             const metaHtml = isZero ? '' : `<div class="meta">${s.start} → ${s.finish} ms</div>`;
             box.innerHTML = `<div class="name">${label}</div>${metaHtml}`;
@@ -1153,7 +1155,9 @@
                 // vertical: place by top (time) within column
                 const topMargin = 48; // space for label
                 let topPx = (s.start * scale + topMargin);
-                const heightPx = Math.max(24, Math.round((isZero ? durForSize : s.dur) * scale));
+                // time-axis minimum equals the rendered size for Time=1
+                const unitPxV = Math.max(1, Math.round(1 * scale));
+                const heightPx = Math.max(unitPxV, Math.round((isZero ? durForSize : s.dur) * scale));
                 const lastEnd = lastEndByThread[s.thread] ?? -Infinity;
                 if (topPx < lastEnd + minGapPx) topPx = lastEnd + minGapPx;
                 box.style.top = topPx + 'px';
