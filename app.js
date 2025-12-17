@@ -152,6 +152,8 @@
         // Focus thread input by default when opening Add Module
         try { if (amThread) { amThread.focus(); amThread.select && amThread.select(); } }
         catch (e) { if (amName) amName.focus(); }
+        // default time value is 0
+        try { if (amTime) amTime.value = '0'; } catch (e) { }
     }
 
     function openModuleEditor(moduleId) {
