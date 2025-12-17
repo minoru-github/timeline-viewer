@@ -1130,11 +1130,16 @@
         // together with module boxes. This avoids needing CSS transforms that
         // can desynchronize coordinates.
         try {
-            if (svg.parentNode !== timelineEl) {
-                timelineEl.insertBefore(svg, timelineEl.firstChild);
+            // ensure the SVG is a child of the timeline wrapper so it scrolls with content
+            const wrap = timelineEl.parentNode; // timelineWrap
+            if (wrap && svg.parentNode !== wrap) {
+                wrap.insertBefore(svg, timelineEl);
             }
             // clear any previous transform state
             svg.style.transform = '';
+            // ensure svg is absolutely positioned to overlay timeline content
+            svg.style.position = 'absolute';
+            svg.style.left = '0'; svg.style.top = '0';
         } catch (e) {
             // ignore if DOM operations fail
         }
@@ -1153,6 +1158,19 @@
         } catch (e) { }
         // reflow to get correct bounding boxes
         let svgRect = svg.getBoundingClientRect();
+
+        // adjust timelineWrap height so the scrolling region is the area under controls
+        try {
+            const wrap = document.getElementById('timelineWrap');
+            const controls = document.querySelector('.controls');
+            if (wrap && controls) {
+                const ctrlH = controls.getBoundingClientRect().height || 0;
+                // give small buffer for margins/padding
+                const buffer = 24;
+                const h = Math.max(120, window.innerHeight - ctrlH - buffer);
+                wrap.style.height = h + 'px';
+            }
+        } catch (e) { /* ignore */ }
 
         // layout adjustment: ensure each module is positioned after its `from` modules
         const DEP_GAP = 40;
