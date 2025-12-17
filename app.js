@@ -7,6 +7,8 @@
     // current state kept so DnD can update threads and re-schedule
     let currentModules = {};
     let currentScheduled = {};
+    // orientation: 'horizontal' (default, left->right) or 'vertical' (top->bottom)
+    let orientation = 'horizontal';
     // undo history: list of module snapshots (deep-cloned objects)
     const history = [];
     const MAX_HISTORY = 100;
@@ -974,32 +976,62 @@
         }
         // collect threads
         const threads = Array.from(new Set(Object.values(modules).map(m => m.thread))).sort((a, b) => parseFloat(a) - parseFloat(b));
-        const laneH = 110; // match CSS --lane-h
+        const laneH = 110; // match CSS --lane-h (used as module column height in horizontal mode)
+        const laneW = 220; // width reserved per thread column in vertical mode
         const pad = 20;
         const totalDuration = Math.max(...Object.values(scheduled).map(s => s.finish), 100);
-        // adaptive pixels per millisecond to ensure small-duration timelines get enough space
-        // Increased values to provide more horizontal spacing across the timeline.
-        const minPPM = 60; // minimum pixels per ms (was 30)
-        const maxPPM = 320; // maximum pixels per ms (was 180)
-        const targetWidth = 2000; // desired minimum width (was 1400)
-        let ppm = Math.max(minPPM, Math.min(maxPPM, Math.floor(targetWidth / Math.max(1, totalDuration))));
-        const width = Math.max(targetWidth, Math.ceil(totalDuration * ppm) + 400);
+        // width/height of SVG/content; will be set per-orientation
+        let width = 0;
+        let contentH = 0;
+        // adaptive pixels per millisecond
+        const minPPM = 60;
+        const maxPPM = 320;
+        const targetLen = 2000;
+        let ppm = Math.max(minPPM, Math.min(maxPPM, Math.floor(targetLen / Math.max(1, totalDuration))));
         const scale = ppm; // px per ms
         const lanes = {};
-        threads.forEach((t, i) => {
-            const lane = document.createElement('div');
-            lane.className = 'lane';
-            lane.style.height = laneH + 'px';
-            lane.dataset.thread = t;
-            lane.style.position = 'relative';
-            lane.style.minWidth = width + 'px';
-            const label = document.createElement('div'); label.className = 'laneLabel'; label.textContent = 'Thread ' + t;
-            lane.appendChild(label);
-            timelineEl.appendChild(lane);
-            lanes[t] = { el: lane, index: i };
-        });
+        // create lanes differently depending on orientation
+        if (orientation === 'horizontal') {
+            width = Math.max(targetLen, Math.ceil(totalDuration * scale) + 400);
+            threads.forEach((t, i) => {
+                const lane = document.createElement('div');
+                lane.className = 'lane';
+                lane.style.height = laneH + 'px';
+                lane.dataset.thread = t;
+                lane.style.position = 'relative';
+                lane.style.minWidth = width + 'px';
+                const label = document.createElement('div'); label.className = 'laneLabel'; label.textContent = 'Thread ' + t;
+                lane.appendChild(label);
+                timelineEl.appendChild(lane);
+                lanes[t] = { el: lane, index: i };
+            });
+        } else {
+            // vertical mode: lanes are columns, timeline should lay them out horizontally
+            const totalHeight = Math.max(targetLen, Math.ceil(totalDuration * scale) + 200);
+            // make timeline display as row of columns
+            timelineEl.style.display = 'flex';
+            timelineEl.style.flexDirection = 'row';
+            threads.forEach((t, i) => {
+                const lane = document.createElement('div');
+                lane.className = 'lane';
+                lane.style.width = laneW + 'px';
+                lane.dataset.thread = t;
+                lane.style.position = 'relative';
+                lane.style.minHeight = totalHeight + 'px';
+                lane.style.paddingLeft = '8px';
+                const label = document.createElement('div'); label.className = 'laneLabel'; label.textContent = 'Thread ' + t;
+                // position label at top center for vertical
+                label.style.left = '50%'; label.style.top = '8px'; label.style.transform = 'translateX(-50%)';
+                lane.appendChild(label);
+                timelineEl.appendChild(lane);
+                lanes[t] = { el: lane, index: i };
+            });
+            // compute width and contentH for vertical layout
+            width = threads.length * laneW + 200;
+            contentH = totalHeight;
+        }
 
-        // create module boxes inside lanes (centered vertically)
+        // create module boxes inside lanes
         for (const name in scheduled) {
             const s = scheduled[name];
             const m = modules[name];
@@ -1008,18 +1040,25 @@
             box.className = 'module';
             box.dataset.name = name;
             box.dataset.thread = s.thread;
-            const leftMargin = 200; // account for label area (increased)
-            box.style.left = (s.start * scale + leftMargin) + 'px';
-            // ensure a small visible width even for zero-duration modules
-            box.style.width = Math.max(40, Math.round(s.dur * scale)) + 'px';
-            box.style.top = '50%';
-            box.style.transform = 'translateY(-50%)';
-            // display the short module name (module id is thread:module)
-            const label = m && m.shortName ? m.shortName : name;
-            box.innerHTML = `<div class="name">${label}</div><div class="meta">${s.start} → ${s.finish} ms</div>`;
-            // apply a left accent color to match outgoing arrows
             const boxColor = colorFor(name);
             box.style.borderLeft = `6px solid ${boxColor}`;
+            const label = m && m.shortName ? m.shortName : name;
+            box.innerHTML = `<div class="name">${label}</div><div class="meta">${s.start} → ${s.finish} ms</div>`;
+            if (orientation === 'horizontal') {
+                const leftMargin = 200; // account for label area
+                box.style.left = (s.start * scale + leftMargin) + 'px';
+                box.style.width = Math.max(40, Math.round(s.dur * scale)) + 'px';
+                box.style.top = '50%';
+                box.style.transform = 'translateY(-50%)';
+            } else {
+                // vertical: place by top (time) within column
+                const topMargin = 48; // space for label
+                box.style.top = (s.start * scale + topMargin) + 'px';
+                box.style.left = '50%';
+                box.style.transform = 'translateX(-50%)';
+                // width stays similar
+                box.style.width = Math.max(40, Math.round(s.dur * scale)) + 'px';
+            }
             // click handler: support Shift-click dependency creation (Shift: select source -> click target)
             box.addEventListener('click', (ev) => {
                 // Shift-click: dependency creation flow
@@ -1066,12 +1105,14 @@
         // compute box rects using DOM geometry so arrows align to edges
         const boxRects = {};
         // ensure svg has the correct size and will scroll in sync with the timeline content
-        const contentH = threads.length * laneH + 80;
-        svg.setAttribute('width', width);
-        svg.setAttribute('height', contentH);
+        if (orientation === 'horizontal') {
+            contentH = threads.length * laneH + 80;
+        }
+        svg.setAttribute('width', width || 800);
+        svg.setAttribute('height', contentH || 400);
         // set explicit style sizes so CSS width:100% doesn't clip content width
-        svg.style.width = width + 'px';
-        svg.style.height = contentH + 'px';
+        svg.style.width = (width || 800) + 'px';
+        svg.style.height = (contentH || 400) + 'px';
 
         // ensure the SVG sits inside the scrolling timeline content so it scrolls
         // together with module boxes. This avoids needing CSS transforms that
@@ -1085,57 +1126,85 @@
         } catch (e) {
             // ignore if DOM operations fail
         }
+        // hook up orientation toggle button if present (id: toggleOrientationBtn)
+        try {
+            const btn = document.getElementById('toggleOrientationBtn');
+            if (btn) {
+                btn.textContent = (orientation === 'horizontal') ? '上から下表示に切替' : '左から右表示に切替';
+                btn.onclick = () => {
+                    orientation = (orientation === 'horizontal') ? 'vertical' : 'horizontal';
+                    // reset timeline display style when switching back
+                    if (orientation === 'horizontal') { timelineEl.style.display = ''; timelineEl.style.flexDirection = ''; }
+                    try { render(currentModules, currentScheduled); } catch (e) { console.warn('render on orientation change failed', e); }
+                };
+            }
+        } catch (e) { }
         // reflow to get correct bounding boxes
         let svgRect = svg.getBoundingClientRect();
 
-        // layout adjustment: ensure each module is positioned strictly to the right of its `from` modules
-        // if necessary, shift the module right and propagate shifts to later modules on the same thread
-        const DEP_GAP = 40; // pixels gap after from.right (increased for readability)
-        // collect initial rects
+        // layout adjustment: ensure each module is positioned after its `from` modules
+        const DEP_GAP = 40;
         const rects = {};
         for (const name in scheduled) {
             const el = timelineEl.querySelector(`.module[data-name="${name}"]`);
             if (!el) continue;
             const r = el.getBoundingClientRect();
-            rects[name] = { el, left: r.left, width: r.width, laneIndex: lanes[scheduled[name].thread].index };
+            if (orientation === 'horizontal') rects[name] = { el, left: r.left, width: r.width, laneIndex: lanes[scheduled[name].thread].index };
+            else rects[name] = { el, top: r.top, height: r.height, laneIndex: lanes[scheduled[name].thread].index };
         }
 
-        // sort modules by left (visual start) to process in-order
-        const order = Object.keys(rects).sort((a, b) => rects[a].left - rects[b].left);
-
-        for (const name of order) {
-            const entry = rects[name];
-            // compute max right of dependencies
-            const deps = (modules[name].from || []).filter(d => d && d in rects);
-            let maxRight = -Infinity;
-            for (const d of deps) {
-                const r = rects[d];
-                if (!r) continue;
-                const right = r.left + r.width;
-                if (right > maxRight) maxRight = right;
-            }
-            if (maxRight === -Infinity) continue; // no deps
-            const desiredLeft = Math.max(entry.left, maxRight + DEP_GAP);
-            if (desiredLeft <= entry.left + 0.5) continue; // already ok (allow tiny epsilon)
-            const delta = desiredLeft - entry.left;
-            // shift this module
-            const curLeftPx = parseFloat(entry.el.style.left || entry.el.getBoundingClientRect().left - svgRect.left);
-            entry.el.style.left = (curLeftPx + delta) + 'px';
-            // update its rect
-            entry.left += delta;
-            // propagate shift to later modules on same thread that would overlap
-            for (const otherName in rects) {
-                if (otherName === name) continue;
-                const other = rects[otherName];
-                if (other.laneIndex !== entry.laneIndex) continue;
-                if (other.left >= entry.left - delta - 1) {
-                    // if other is positioned at or after original, shift it by delta to preserve ordering
-                    const otherCurLeftPx = parseFloat(other.el.style.left || other.el.getBoundingClientRect().left - svgRect.left);
-                    other.el.style.left = (otherCurLeftPx + delta) + 'px';
-                    other.left += delta;
+        if (orientation === 'horizontal') {
+            const order = Object.keys(rects).sort((a, b) => rects[a].left - rects[b].left);
+            for (const name of order) {
+                const entry = rects[name];
+                const deps = (modules[name].from || []).filter(d => d && d in rects);
+                let maxRight = -Infinity;
+                for (const d of deps) {
+                    const r = rects[d]; if (!r) continue;
+                    const right = r.left + r.width; if (right > maxRight) maxRight = right;
+                }
+                if (maxRight === -Infinity) continue;
+                const desiredLeft = Math.max(entry.left, maxRight + DEP_GAP);
+                if (desiredLeft <= entry.left + 0.5) continue;
+                const delta = desiredLeft - entry.left;
+                const curLeftPx = parseFloat(entry.el.style.left || entry.el.getBoundingClientRect().left - svgRect.left);
+                entry.el.style.left = (curLeftPx + delta) + 'px';
+                entry.left += delta;
+                for (const otherName in rects) {
+                    if (otherName === name) continue;
+                    const other = rects[otherName]; if (other.laneIndex !== entry.laneIndex) continue;
+                    if (other.left >= entry.left - delta - 1) {
+                        const otherCurLeftPx = parseFloat(other.el.style.left || other.el.getBoundingClientRect().left - svgRect.left);
+                        other.el.style.left = (otherCurLeftPx + delta) + 'px'; other.left += delta;
+                    }
                 }
             }
-            // update rects for dependencies that were shifted earlier may affect later ones, continue loop
+        } else {
+            const order = Object.keys(rects).sort((a, b) => rects[a].top - rects[b].top);
+            for (const name of order) {
+                const entry = rects[name];
+                const deps = (modules[name].from || []).filter(d => d && d in rects);
+                let maxBottom = -Infinity;
+                for (const d of deps) {
+                    const r = rects[d]; if (!r) continue;
+                    const bottom = r.top + r.height; if (bottom > maxBottom) maxBottom = bottom;
+                }
+                if (maxBottom === -Infinity) continue;
+                const desiredTop = Math.max(entry.top, maxBottom + DEP_GAP);
+                if (desiredTop <= entry.top + 0.5) continue;
+                const delta = desiredTop - entry.top;
+                const curTopPx = parseFloat(entry.el.style.top || entry.el.getBoundingClientRect().top - svgRect.top);
+                entry.el.style.top = (curTopPx + delta) + 'px';
+                entry.top += delta;
+                for (const otherName in rects) {
+                    if (otherName === name) continue;
+                    const other = rects[otherName]; if (other.laneIndex !== entry.laneIndex) continue;
+                    if (other.top >= entry.top - delta - 1) {
+                        const otherCurTopPx = parseFloat(other.el.style.top || other.el.getBoundingClientRect().top - svgRect.top);
+                        other.el.style.top = (otherCurTopPx + delta) + 'px'; other.top += delta;
+                    }
+                }
+            }
         }
 
         // recompute svgRect after layout shifts
@@ -1144,10 +1213,17 @@
             const el = timelineEl.querySelector(`.module[data-name="${name}"]`);
             if (!el) continue;
             const r = el.getBoundingClientRect();
-            const left = (r.left - svgRect.left);
-            const right = left + r.width;
-            const cy = (r.top - svgRect.top) + r.height / 2;
-            boxRects[name] = { left, right, cy };
+            if (orientation === 'horizontal') {
+                const left = (r.left - svgRect.left);
+                const right = left + r.width;
+                const cy = (r.top - svgRect.top) + r.height / 2;
+                boxRects[name] = { left, right, cy };
+            } else {
+                const top = (r.top - svgRect.top);
+                const bottom = top + r.height;
+                const cx = (r.left - svgRect.left) + r.width / 2;
+                boxRects[name] = { top, bottom, cx };
+            }
         }
 
         // draw arrows for to relationships from right-edge to left-edge
@@ -1159,13 +1235,18 @@
                 if (!(name in boxRects) || !(tgt in boxRects)) continue;
                 const a = boxRects[name];
                 const b = boxRects[tgt];
-                const startX = a.right;
-                const startY = a.cy;
-                const endX = b.left;
-                const endY = b.cy;
-                const dx = Math.abs(endX - startX);
-                const mx = Math.max(60, dx * 0.55);
-                const d = `M ${startX} ${startY} C ${startX + mx} ${startY} ${endX - mx} ${endY} ${endX} ${endY}`;
+                let d, startX, startY, endX, endY;
+                if (orientation === 'horizontal') {
+                    startX = a.right; startY = a.cy; endX = b.left; endY = b.cy;
+                    const dx = Math.abs(endX - startX);
+                    const mx = Math.max(60, dx * 0.55);
+                    d = `M ${startX} ${startY} C ${startX + mx} ${startY} ${endX - mx} ${endY} ${endX} ${endY}`;
+                } else {
+                    startX = a.cx; startY = a.bottom; endX = b.cx; endY = b.top;
+                    const dy = Math.abs(endY - startY);
+                    const my = Math.max(60, dy * 0.55);
+                    d = `M ${startX} ${startY} C ${startX} ${startY + my} ${endX} ${endY - my} ${endX} ${endY}`;
+                }
                 // hit area (invisible, wide) for easier selection
                 const hit = document.createElementNS(svgNS, 'path');
                 hit.setAttribute('d', d);
@@ -1196,7 +1277,7 @@
                 });
                 svg.appendChild(path);
 
-                // arrow head as a small left-pointing triangle at endX,endY
+                // arrow head at end point
                 const tri = document.createElementNS(svgNS, 'path');
                 const px = 8; // triangle length
                 const py = 5; // half height
