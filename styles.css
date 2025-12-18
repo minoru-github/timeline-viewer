@@ -17,9 +17,11 @@ body {
 }
 
 /* Make viewport fixed and keep timeline scrollable under controls */
-html, body {
+html,
+body {
     height: 100vh;
-    overflow: hidden; /* prevent page from scrolling; timeline area will scroll */
+    overflow: hidden;
+    /* prevent page from scrolling; timeline area will scroll */
 }
 
 header {
