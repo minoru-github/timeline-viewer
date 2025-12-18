@@ -16,6 +16,14 @@ body {
     color: #111
 }
 
+/* Make viewport fixed and keep timeline scrollable under controls */
+html,
+body {
+    height: 100vh;
+    overflow: hidden;
+    /* prevent page from scrolling; timeline area will scroll */
+}
+
 header {
     padding: 16px 24px;
     background: #fff;
@@ -85,7 +93,9 @@ header {
     padding: 16px;
     background: #fff;
     border-radius: 6px;
-    overflow: auto
+    overflow: auto;
+    /* default height; will be adjusted by JS for exact control height */
+    height: calc(100vh - 120px);
 }
 
 .timeline {

@@ -7,6 +7,8 @@
     // current state kept so DnD can update threads and re-schedule
     let currentModules = {};
     let currentScheduled = {};
+    // orientation: 'horizontal' (default, left->right) or 'vertical' (top->bottom)
+    let orientation = 'horizontal';
     // undo history: list of module snapshots (deep-cloned objects)
     const history = [];
     const MAX_HISTORY = 100;
@@ -82,6 +84,14 @@
         , renderFailed: 'レンダリング中にエラーが発生しました: '
     };
 
+    // Format time value with up to 3 decimal places (trim trailing zeros)
+    function fmtTime(n) {
+        const num = Number(n);
+        if (!Number.isFinite(num)) return String(n);
+        const s = num.toFixed(3);
+        return s.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+    }
+
     function log(s) { logEl.textContent = s }
 
     // show an in-page popup message (error/info)
@@ -147,19 +157,25 @@
         // populate module lists
         populateAddModuleLists();
         if (addModuleModal) addModuleModal.classList.add('open');
-        if (amName) amName.focus();
+        // Focus thread input by default when opening Add Module
+        try { if (amThread) { amThread.focus(); amThread.select && amThread.select(); } }
+        catch (e) { if (amName) amName.focus(); }
+        // default time value is 0
+        try { if (amTime) amTime.value = '0'; } catch (e) { }
     }
 
     function openModuleEditor(moduleId) {
         if (!moduleId || !currentModules[moduleId]) { openAddModule(); return; }
         const m = currentModules[moduleId];
-        populateAddModuleLists();
+        // set edit target first so option lists can exclude self
         editingModuleId = moduleId;
-        // populate fields
+        // populate fields first so list filtering uses correct thread/time
         try {
             amThread.value = String(m.thread || (m.name && m.name.split(':')[0]) || '0');
             amName.value = String(m.shortName || (m.name && m.name.split(':')[1]) || '');
             amTime.value = m.timeProvided ? String(m.time) : '';
+            // now refresh option lists to reflect thread/time filter
+            populateAddModuleLists();
             // select from/to options
             const fromVals = new Set(m.from || []);
             const toVals = new Set(m.to || []);
@@ -182,29 +198,79 @@
     }
 
     function populateAddModuleLists() {
-        // options are current module ids with readable labels
-        const keys = Object.keys(currentModules || {}).sort();
-        const makeOpt = (id) => {
+        // Preserve current selections if possible across refreshes
+        const prevFromSel = new Set(Array.from((amFrom && amFrom.selectedOptions) || []).map(o => o.value));
+        const prevToSel = new Set(Array.from((amTo && amTo.selectedOptions) || []).map(o => o.value));
+
+        // Filter options based on current thread and time input per spec.
+        const allIds = Object.keys(currentModules || {}).sort();
+        const currentThread = String((amThread && amThread.value) || '0');
+        let thisTime = 0;
+        try {
+            const v = (amTime && amTime.value !== '') ? Number(amTime.value) : 0; // empty treated as 0
+            thisTime = Number.isFinite(v) ? v : 0;
+        } catch (_) { thisTime = 0; }
+
+        const filteredIds = allIds.filter((id) => {
+            const m = currentModules[id];
+            const mThread = String(m && m.thread);
+            const mTimeRaw = (m && m.timeProvided) ? Number(m.time) : 0;
+            const mTime = Number.isFinite(mTimeRaw) ? mTimeRaw : 0;
+            // Exclude self when editing to prevent selecting itself in From/To
+            if (editingModuleId && id === editingModuleId) return false;
+            if (thisTime > 0) {
+                // time > 0: show same-thread only
+                return mThread === currentThread;
+            } else {
+                // time == 0: show all same-thread; other threads only modules with time == 0
+                if (mThread === currentThread) return true;
+                return mTime === 0;
+            }
+        });
+
+        const makeOptWithSel = (id, isSelected) => {
             const m = currentModules[id];
             const label = m && m.shortName ? `${m.thread}:${m.shortName}` : id;
-            return `<option value="${id}">${label}</option>`;
+            return `<option value="${id}"${isSelected ? ' selected' : ''}>${label}</option>`;
         };
-        if (amFrom) amFrom.innerHTML = keys.map(makeOpt).join('');
-        if (amTo) amTo.innerHTML = keys.map(makeOpt).join('');
+
+        if (amFrom) {
+            amFrom.innerHTML = filteredIds.map(id => makeOptWithSel(id, prevFromSel.has(id))).join('');
+        }
+        if (amTo) {
+            amTo.innerHTML = filteredIds.map(id => makeOptWithSel(id, prevToSel.has(id))).join('');
+        }
     }
 
     if (addModuleBtn) addModuleBtn.addEventListener('click', (ev) => { ev.preventDefault(); openAddModule(); });
     if (amCancel) amCancel.addEventListener('click', (ev) => { ev.preventDefault(); closeAddModule(); });
 
+    // Refresh lists when thread or time changes while modal is open
+    if (amThread) amThread.addEventListener('input', () => { try { populateAddModuleLists(); } catch (_) { } });
+    if (amTime) amTime.addEventListener('input', () => { try { populateAddModuleLists(); } catch (_) { } });
+
+    // Global handler: when Add Module modal is open, Enter should trigger Create/Save
+    document.addEventListener('keydown', (ev) => {
+        try {
+            if (!addModuleModal || !addModuleModal.classList.contains('open')) return;
+            if (ev.key !== 'Enter') return;
+            // Avoid triggering when focus is on a multi-select (Enter used for other interactions)
+            const tag = (ev.target && ev.target.tagName) ? ev.target.tagName.toUpperCase() : '';
+            if (tag === 'TEXTAREA') return;
+            ev.preventDefault();
+            if (amCreate) amCreate.click();
+        } catch (e) { console.warn('Enter handler error', e); }
+    });
+
     if (amCreate) amCreate.addEventListener('click', (ev) => {
         ev.preventDefault();
         const thread = String((amThread && amThread.value) || '0').trim();
         const short = String((amName && amName.value) || '').trim();
-        const timeVal = (amTime && amTime.value) ? Number(amTime.value) : null;
+        const timeVal = (amTime && amTime.value !== '') ? Number(amTime.value) : null;
         if (!short) { showPopup('Invalid', 'Module name is required'); return; }
         // collect from/to selections
-        const fromSel = Array.from((amFrom && amFrom.selectedOptions) || []).map(o => o.value);
-        const toSel = Array.from((amTo && amTo.selectedOptions) || []).map(o => o.value);
+        let fromSel = Array.from((amFrom && amFrom.selectedOptions) || []).map(o => o.value);
+        let toSel = Array.from((amTo && amTo.selectedOptions) || []).map(o => o.value);
 
         // If editing an existing module
         if (editingModuleId) {
@@ -231,8 +297,10 @@
             m.thread = thread;
             m.shortName = short;
             m.timeProvided = false;
-            if (timeVal != null && Number.isFinite(timeVal) && timeVal > 0) { m.time = timeVal; m.timeProvided = true; }
-            // set new from/to (deduped)
+            if (timeVal != null && Number.isFinite(timeVal) && timeVal >= 0) { m.time = timeVal; m.timeProvided = true; }
+            // remove any accidental self-references (old or new id) and set new from/to (deduped)
+            fromSel = fromSel.filter(v => v && v !== oldId && v !== newId);
+            toSel = toSel.filter(v => v && v !== oldId && v !== newId);
             m.from = Array.from(new Set(fromSel));
             m.to = Array.from(new Set(toSel));
 
@@ -295,7 +363,8 @@
 
         // create module object
         const m = { name: newId, shortName: short, thread: thread, time: 0, from: [], to: [], timeProvided: false };
-        if (timeVal != null && Number.isFinite(timeVal) && timeVal > 0) { m.time = timeVal; m.timeProvided = true; }
+        // Treat 0 as a valid provided value so it round-trips in the editor
+        if (timeVal != null && Number.isFinite(timeVal) && timeVal >= 0) { m.time = timeVal; m.timeProvided = true; }
         m.from = Array.from(new Set(fromSel));
         m.to = Array.from(new Set(toSel));
 
@@ -452,7 +521,7 @@
         for (const name in modules) {
             const m = modules[name];
             if (m.timeProvided) {
-                if (!Number.isFinite(m.time) || m.time <= 0) badTimes.push(`${name}: ${m.time}`);
+                if (!Number.isFinite(m.time) || m.time < 0) badTimes.push(`${name}: ${m.time}`);
             }
         }
         if (badTimes.length) errors.push(MSG.invalidTimeValues + badTimes.join(' ; '));
@@ -737,6 +806,7 @@
                     log(MSG.renderFailed + (e && e.message ? e.message : String(e)));
                 }
             });
+
         });
     }
 
@@ -974,33 +1044,76 @@
         }
         // collect threads
         const threads = Array.from(new Set(Object.values(modules).map(m => m.thread))).sort((a, b) => parseFloat(a) - parseFloat(b));
-        const laneH = 110; // match CSS --lane-h
+        const laneH = 110; // match CSS --lane-h (used as module column height in horizontal mode)
+        const laneW = 220; // width reserved per thread column in vertical mode
         const pad = 20;
         const totalDuration = Math.max(...Object.values(scheduled).map(s => s.finish), 100);
-        // adaptive pixels per millisecond to ensure small-duration timelines get enough space
-        // Increased values to provide more horizontal spacing across the timeline.
-        const minPPM = 60; // minimum pixels per ms (was 30)
-        const maxPPM = 320; // maximum pixels per ms (was 180)
-        const targetWidth = 2000; // desired minimum width (was 1400)
-        let ppm = Math.max(minPPM, Math.min(maxPPM, Math.floor(targetWidth / Math.max(1, totalDuration))));
-        const width = Math.max(targetWidth, Math.ceil(totalDuration * ppm) + 400);
+        // width/height of SVG/content; will be set per-orientation
+        let width = 0;
+        let contentH = 0;
+        // adaptive pixels per millisecond
+        const minPPM = 60;
+        const maxPPM = 320;
+        const targetLen = 2000;
+        let ppm = Math.max(minPPM, Math.min(maxPPM, Math.floor(targetLen / Math.max(1, totalDuration))));
         const scale = ppm; // px per ms
         const lanes = {};
-        threads.forEach((t, i) => {
-            const lane = document.createElement('div');
-            lane.className = 'lane';
-            lane.style.height = laneH + 'px';
-            lane.dataset.thread = t;
-            lane.style.position = 'relative';
-            lane.style.minWidth = width + 'px';
-            const label = document.createElement('div'); label.className = 'laneLabel'; label.textContent = 'Thread ' + t;
-            lane.appendChild(label);
-            timelineEl.appendChild(lane);
-            lanes[t] = { el: lane, index: i };
-        });
+        // create lanes differently depending on orientation
+        if (orientation === 'horizontal') {
+            width = Math.max(targetLen, Math.ceil(totalDuration * scale) + 400);
+            threads.forEach((t, i) => {
+                const lane = document.createElement('div');
+                lane.className = 'lane';
+                lane.style.height = laneH + 'px';
+                lane.dataset.thread = t;
+                lane.style.position = 'relative';
+                lane.style.minWidth = width + 'px';
+                const label = document.createElement('div'); label.className = 'laneLabel'; label.textContent = 'Thread ' + t;
+                lane.appendChild(label);
+                timelineEl.appendChild(lane);
+                lanes[t] = { el: lane, index: i };
+            });
+        } else {
+            // vertical mode: lanes are columns, timeline should lay them out horizontally
+            const totalHeight = Math.max(targetLen, Math.ceil(totalDuration * scale) + 200);
+            // make timeline display as row of columns
+            timelineEl.style.display = 'flex';
+            timelineEl.style.flexDirection = 'row';
+            threads.forEach((t, i) => {
+                const lane = document.createElement('div');
+                lane.className = 'lane';
+                lane.style.width = laneW + 'px';
+                lane.dataset.thread = t;
+                lane.style.position = 'relative';
+                lane.style.minHeight = totalHeight + 'px';
+                lane.style.paddingLeft = '8px';
+                const label = document.createElement('div'); label.className = 'laneLabel'; label.textContent = 'Thread ' + t;
+                // position label at top center for vertical
+                label.style.left = '50%'; label.style.top = '8px'; label.style.transform = 'translateX(-50%)';
+                lane.appendChild(label);
+                timelineEl.appendChild(lane);
+                lanes[t] = { el: lane, index: i };
+            });
+            // compute width and contentH for vertical layout
+            width = threads.length * laneW + 200;
+            contentH = totalHeight;
+        }
 
-        // create module boxes inside lanes (centered vertically)
-        for (const name in scheduled) {
+        // create module boxes inside lanes
+        // Render order: by thread, then by start time to allow non-overlap adjustment
+        const orderedNames = Object.keys(scheduled).sort((a, b) => {
+            const sa = scheduled[a];
+            const sb = scheduled[b];
+            if (sa.thread !== sb.thread) return String(sa.thread).localeCompare(String(sb.thread));
+            if (sa.start !== sb.start) return sa.start - sb.start;
+            const da = Number.isFinite(sa.dur) ? sa.dur : 0;
+            const db = Number.isFinite(sb.dur) ? sb.dur : 0;
+            if (da !== db) return da - db; // zero-duration first when start ties
+            return a.localeCompare(b);
+        });
+        const lastEndByThread = {}; // pixel right/bottom edge to avoid overlaps within a thread
+        const minGapPx = 4;
+        for (const name of orderedNames) {
             const s = scheduled[name];
             const m = modules[name];
             const lane = lanes[s.thread];
@@ -1008,18 +1121,64 @@
             box.className = 'module';
             box.dataset.name = name;
             box.dataset.thread = s.thread;
-            const leftMargin = 200; // account for label area (increased)
-            box.style.left = (s.start * scale + leftMargin) + 'px';
-            // ensure a small visible width even for zero-duration modules
-            box.style.width = Math.max(40, Math.round(s.dur * scale)) + 'px';
-            box.style.top = '50%';
-            box.style.transform = 'translateY(-50%)';
-            // display the short module name (module id is thread:module)
-            const label = m && m.shortName ? m.shortName : name;
-            box.innerHTML = `<div class="name">${label}</div><div class="meta">${s.start} → ${s.finish} ms</div>`;
-            // apply a left accent color to match outgoing arrows
             const boxColor = colorFor(name);
             box.style.borderLeft = `6px solid ${boxColor}`;
+            const label = m && m.shortName ? m.shortName : name;
+            // If duration is zero, hide time meta and treat size as duration=1 for layout
+            const isZero = !s.dur || Number(s.dur) === 0;
+            const durForSize = isZero ? 1 : (Number.isFinite(s.dur) ? s.dur : 0);
+            // time-axis minimum equals the rendered size for Time=1
+            const unitPx = Math.max(1, Math.round(1 * scale));
+            const sizePx = Math.max(unitPx, Math.round(durForSize * scale));
+            // set inner HTML with optional meta
+            const metaHtml = isZero ? '' : `<div class="meta">${fmtTime(s.start)} → ${fmtTime(s.finish)} ms</div>`;
+            box.innerHTML = `<div class="name">${label}</div>${metaHtml}`;
+            // visual tweaks for zero-duration modules
+            if (isZero) {
+                // sharp corners and light gray background
+                box.style.borderRadius = '0';
+                box.style.background = '#e0e2e5';
+            } else {
+                box.style.borderRadius = '';
+                box.style.background = '';
+            }
+            if (orientation === 'horizontal') {
+                const leftMargin = 200; // account for label area
+                let leftPx = (s.start * scale + leftMargin);
+                // compute width for overlap avoidance (square for zero-duration)
+                const widthPx = sizePx;
+                const lastEnd = lastEndByThread[s.thread] ?? -Infinity;
+                if (leftPx < lastEnd + minGapPx) leftPx = lastEnd + minGapPx;
+                box.style.left = leftPx + 'px';
+                lastEndByThread[s.thread] = leftPx + widthPx;
+                // render: do NOT force square for zero; always use normal height
+                box.style.width = sizePx + 'px';
+                box.style.height = '';
+                box.style.top = '50%';
+                box.style.transform = 'translateY(-50%)';
+                // accent on left for horizontal
+                box.style.borderLeft = `6px solid ${boxColor}`;
+                box.style.borderTop = '';
+            } else {
+                // vertical: place by top (time) within column
+                const topMargin = 48; // space for label
+                let topPx = (s.start * scale + topMargin);
+                // time-axis minimum equals the rendered size for Time=1
+                const unitPxV = Math.max(1, Math.round(1 * scale));
+                const heightPx = Math.max(unitPxV, Math.round((isZero ? durForSize : s.dur) * scale));
+                const lastEnd = lastEndByThread[s.thread] ?? -Infinity;
+                if (topPx < lastEnd + minGapPx) topPx = lastEnd + minGapPx;
+                box.style.top = topPx + 'px';
+                lastEndByThread[s.thread] = topPx + heightPx;
+                // render height from duration (use dur=1 when zero), keep normal width (no square)
+                box.style.height = heightPx + 'px';
+                box.style.width = '120px';
+                box.style.left = '50%';
+                box.style.transform = 'translateX(-50%)';
+                // accent on top for vertical
+                box.style.borderTop = `6px solid ${boxColor}`;
+                box.style.borderLeft = '';
+            }
             // click handler: support Shift-click dependency creation (Shift: select source -> click target)
             box.addEventListener('click', (ev) => {
                 // Shift-click: dependency creation flow
@@ -1066,76 +1225,124 @@
         // compute box rects using DOM geometry so arrows align to edges
         const boxRects = {};
         // ensure svg has the correct size and will scroll in sync with the timeline content
-        const contentH = threads.length * laneH + 80;
-        svg.setAttribute('width', width);
-        svg.setAttribute('height', contentH);
+        if (orientation === 'horizontal') {
+            contentH = threads.length * laneH + 80;
+        }
+        svg.setAttribute('width', width || 800);
+        svg.setAttribute('height', contentH || 400);
         // set explicit style sizes so CSS width:100% doesn't clip content width
-        svg.style.width = width + 'px';
-        svg.style.height = contentH + 'px';
+        svg.style.width = (width || 800) + 'px';
+        svg.style.height = (contentH || 400) + 'px';
 
         // ensure the SVG sits inside the scrolling timeline content so it scrolls
         // together with module boxes. This avoids needing CSS transforms that
         // can desynchronize coordinates.
         try {
-            if (svg.parentNode !== timelineEl) {
-                timelineEl.insertBefore(svg, timelineEl.firstChild);
+            // ensure the SVG is a child of the timeline wrapper so it scrolls with content
+            const wrap = timelineEl.parentNode; // timelineWrap
+            if (wrap && svg.parentNode !== wrap) {
+                wrap.insertBefore(svg, timelineEl);
             }
             // clear any previous transform state
             svg.style.transform = '';
+            // ensure svg is absolutely positioned to overlay timeline content
+            svg.style.position = 'absolute';
+            svg.style.left = '0'; svg.style.top = '0';
         } catch (e) {
             // ignore if DOM operations fail
         }
+        // hook up orientation toggle button if present (id: toggleOrientationBtn)
+        try {
+            const btn = document.getElementById('toggleOrientationBtn');
+            if (btn) {
+                btn.textContent = (orientation === 'horizontal') ? '上から下表示に切替' : '左から右表示に切替';
+                btn.onclick = () => {
+                    orientation = (orientation === 'horizontal') ? 'vertical' : 'horizontal';
+                    // reset timeline display style when switching back
+                    if (orientation === 'horizontal') { timelineEl.style.display = ''; timelineEl.style.flexDirection = ''; }
+                    try { render(currentModules, currentScheduled); } catch (e) { console.warn('render on orientation change failed', e); }
+                };
+            }
+        } catch (e) { }
         // reflow to get correct bounding boxes
         let svgRect = svg.getBoundingClientRect();
 
-        // layout adjustment: ensure each module is positioned strictly to the right of its `from` modules
-        // if necessary, shift the module right and propagate shifts to later modules on the same thread
-        const DEP_GAP = 40; // pixels gap after from.right (increased for readability)
-        // collect initial rects
+        // adjust timelineWrap height so the scrolling region is the area under controls
+        try {
+            const wrap = document.getElementById('timelineWrap');
+            const controls = document.querySelector('.controls');
+            if (wrap && controls) {
+                const ctrlH = controls.getBoundingClientRect().height || 0;
+                // give small buffer for margins/padding
+                const buffer = 24;
+                const h = Math.max(120, window.innerHeight - ctrlH - buffer);
+                wrap.style.height = h + 'px';
+            }
+        } catch (e) { /* ignore */ }
+
+        // layout adjustment: ensure each module is positioned after its `from` modules
+        const DEP_GAP = 40;
         const rects = {};
         for (const name in scheduled) {
             const el = timelineEl.querySelector(`.module[data-name="${name}"]`);
             if (!el) continue;
             const r = el.getBoundingClientRect();
-            rects[name] = { el, left: r.left, width: r.width, laneIndex: lanes[scheduled[name].thread].index };
+            if (orientation === 'horizontal') rects[name] = { el, left: r.left, width: r.width, laneIndex: lanes[scheduled[name].thread].index };
+            else rects[name] = { el, top: r.top, height: r.height, laneIndex: lanes[scheduled[name].thread].index };
         }
 
-        // sort modules by left (visual start) to process in-order
-        const order = Object.keys(rects).sort((a, b) => rects[a].left - rects[b].left);
-
-        for (const name of order) {
-            const entry = rects[name];
-            // compute max right of dependencies
-            const deps = (modules[name].from || []).filter(d => d && d in rects);
-            let maxRight = -Infinity;
-            for (const d of deps) {
-                const r = rects[d];
-                if (!r) continue;
-                const right = r.left + r.width;
-                if (right > maxRight) maxRight = right;
-            }
-            if (maxRight === -Infinity) continue; // no deps
-            const desiredLeft = Math.max(entry.left, maxRight + DEP_GAP);
-            if (desiredLeft <= entry.left + 0.5) continue; // already ok (allow tiny epsilon)
-            const delta = desiredLeft - entry.left;
-            // shift this module
-            const curLeftPx = parseFloat(entry.el.style.left || entry.el.getBoundingClientRect().left - svgRect.left);
-            entry.el.style.left = (curLeftPx + delta) + 'px';
-            // update its rect
-            entry.left += delta;
-            // propagate shift to later modules on same thread that would overlap
-            for (const otherName in rects) {
-                if (otherName === name) continue;
-                const other = rects[otherName];
-                if (other.laneIndex !== entry.laneIndex) continue;
-                if (other.left >= entry.left - delta - 1) {
-                    // if other is positioned at or after original, shift it by delta to preserve ordering
-                    const otherCurLeftPx = parseFloat(other.el.style.left || other.el.getBoundingClientRect().left - svgRect.left);
-                    other.el.style.left = (otherCurLeftPx + delta) + 'px';
-                    other.left += delta;
+        if (orientation === 'horizontal') {
+            const order = Object.keys(rects).sort((a, b) => rects[a].left - rects[b].left);
+            for (const name of order) {
+                const entry = rects[name];
+                const deps = (modules[name].from || []).filter(d => d && d in rects);
+                let maxRight = -Infinity;
+                for (const d of deps) {
+                    const r = rects[d]; if (!r) continue;
+                    const right = r.left + r.width; if (right > maxRight) maxRight = right;
+                }
+                if (maxRight === -Infinity) continue;
+                const desiredLeft = Math.max(entry.left, maxRight + DEP_GAP);
+                if (desiredLeft <= entry.left + 0.5) continue;
+                const delta = desiredLeft - entry.left;
+                const curLeftPx = parseFloat(entry.el.style.left || entry.el.getBoundingClientRect().left - svgRect.left);
+                entry.el.style.left = (curLeftPx + delta) + 'px';
+                entry.left += delta;
+                for (const otherName in rects) {
+                    if (otherName === name) continue;
+                    const other = rects[otherName]; if (other.laneIndex !== entry.laneIndex) continue;
+                    if (other.left >= entry.left - delta - 1) {
+                        const otherCurLeftPx = parseFloat(other.el.style.left || other.el.getBoundingClientRect().left - svgRect.left);
+                        other.el.style.left = (otherCurLeftPx + delta) + 'px'; other.left += delta;
+                    }
                 }
             }
-            // update rects for dependencies that were shifted earlier may affect later ones, continue loop
+        } else {
+            const order = Object.keys(rects).sort((a, b) => rects[a].top - rects[b].top);
+            for (const name of order) {
+                const entry = rects[name];
+                const deps = (modules[name].from || []).filter(d => d && d in rects);
+                let maxBottom = -Infinity;
+                for (const d of deps) {
+                    const r = rects[d]; if (!r) continue;
+                    const bottom = r.top + r.height; if (bottom > maxBottom) maxBottom = bottom;
+                }
+                if (maxBottom === -Infinity) continue;
+                const desiredTop = Math.max(entry.top, maxBottom + DEP_GAP);
+                if (desiredTop <= entry.top + 0.5) continue;
+                const delta = desiredTop - entry.top;
+                const curTopPx = parseFloat(entry.el.style.top || entry.el.getBoundingClientRect().top - svgRect.top);
+                entry.el.style.top = (curTopPx + delta) + 'px';
+                entry.top += delta;
+                for (const otherName in rects) {
+                    if (otherName === name) continue;
+                    const other = rects[otherName]; if (other.laneIndex !== entry.laneIndex) continue;
+                    if (other.top >= entry.top - delta - 1) {
+                        const otherCurTopPx = parseFloat(other.el.style.top || other.el.getBoundingClientRect().top - svgRect.top);
+                        other.el.style.top = (otherCurTopPx + delta) + 'px'; other.top += delta;
+                    }
+                }
+            }
         }
 
         // recompute svgRect after layout shifts
@@ -1144,10 +1351,17 @@
             const el = timelineEl.querySelector(`.module[data-name="${name}"]`);
             if (!el) continue;
             const r = el.getBoundingClientRect();
-            const left = (r.left - svgRect.left);
-            const right = left + r.width;
-            const cy = (r.top - svgRect.top) + r.height / 2;
-            boxRects[name] = { left, right, cy };
+            if (orientation === 'horizontal') {
+                const left = (r.left - svgRect.left);
+                const right = left + r.width;
+                const cy = (r.top - svgRect.top) + r.height / 2;
+                boxRects[name] = { left, right, cy };
+            } else {
+                const top = (r.top - svgRect.top);
+                const bottom = top + r.height;
+                const cx = (r.left - svgRect.left) + r.width / 2;
+                boxRects[name] = { top, bottom, cx };
+            }
         }
 
         // draw arrows for to relationships from right-edge to left-edge
@@ -1159,13 +1373,18 @@
                 if (!(name in boxRects) || !(tgt in boxRects)) continue;
                 const a = boxRects[name];
                 const b = boxRects[tgt];
-                const startX = a.right;
-                const startY = a.cy;
-                const endX = b.left;
-                const endY = b.cy;
-                const dx = Math.abs(endX - startX);
-                const mx = Math.max(60, dx * 0.55);
-                const d = `M ${startX} ${startY} C ${startX + mx} ${startY} ${endX - mx} ${endY} ${endX} ${endY}`;
+                let d, startX, startY, endX, endY;
+                if (orientation === 'horizontal') {
+                    startX = a.right; startY = a.cy; endX = b.left; endY = b.cy;
+                    const dx = Math.abs(endX - startX);
+                    const mx = Math.max(60, dx * 0.55);
+                    d = `M ${startX} ${startY} C ${startX + mx} ${startY} ${endX - mx} ${endY} ${endX} ${endY}`;
+                } else {
+                    startX = a.cx; startY = a.bottom; endX = b.cx; endY = b.top;
+                    const dy = Math.abs(endY - startY);
+                    const my = Math.max(60, dy * 0.55);
+                    d = `M ${startX} ${startY} C ${startX} ${startY + my} ${endX} ${endY - my} ${endX} ${endY}`;
+                }
                 // hit area (invisible, wide) for easier selection
                 const hit = document.createElementNS(svgNS, 'path');
                 hit.setAttribute('d', d);
@@ -1196,11 +1415,19 @@
                 });
                 svg.appendChild(path);
 
-                // arrow head as a small left-pointing triangle at endX,endY
+                // arrow head at end point
                 const tri = document.createElementNS(svgNS, 'path');
-                const px = 8; // triangle length
-                const py = 5; // half height
-                const triD = `M ${endX} ${endY} L ${endX - px} ${endY - py} L ${endX - px} ${endY + py} Z`;
+                let triD;
+                if (orientation === 'horizontal') {
+                    const px = 8; // triangle length
+                    const py = 5; // half height
+                    triD = `M ${endX} ${endY} L ${endX - px} ${endY - py} L ${endX - px} ${endY + py} Z`;
+                } else {
+                    // vertical: triangle pointing down at endX,endY
+                    const px = 6; // half base
+                    const py = 10; // height
+                    triD = `M ${endX} ${endY} L ${endX - px} ${endY - py} L ${endX + px} ${endY - py} Z`;
+                }
                 // hit triangle (invisible, slightly larger) to ease selection of arrowhead
                 const triHit = document.createElementNS(svgNS, 'path');
                 triHit.setAttribute('d', triD);
@@ -1231,7 +1458,7 @@
             if (totalEl) {
                 const finishes = Object.values(scheduled || {}).map(s => (s && s.finish) ? Number(s.finish) : 0);
                 const endTime = finishes.length ? Math.max(...finishes) : 0;
-                totalEl.textContent = `終了時刻: ${Math.round(endTime)} ms`;
+                totalEl.textContent = `終了時刻: ${fmtTime(endTime)} ms`;
             }
         } catch (e) { console.warn('Failed to update totalTime', e); }
     }
@@ -1272,7 +1499,7 @@
             for (const name in modules) {
                 const m = modules[name];
                 if (m.timeProvided) {
-                    if (!Number.isFinite(m.time) || m.time <= 0) {
+                    if (!Number.isFinite(m.time) || m.time < 0) {
                         badTimes.push(`${name}: ${m.time}`);
                     }
                 }
